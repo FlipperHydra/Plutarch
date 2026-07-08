@@ -44,14 +44,21 @@ _Coming soon._
 
 ## Requirements
 
-- **Python 3.12+** (works on 3.14 too; only `tiktoken` needed the pin bump)
-- **[Ollama](https://ollama.com/download)** running locally on port 11434
-- At least one small model pulled. **Recommended default: `gemma3:1b`**
-  (270m is too small to reliably emit the tool-call XML the agent expects;
-  see the note below):
-  ```bash
-  ollama pull gemma3:1b
-  ```
+Plutarch needs Python 3.12+ and an Ollama daemon. How you provide them
+depends on how you run the app:
+
+- **Docker (recommended)** — the compose stack ships its own Ollama
+  container on an internal network. Skip the Python and Ollama
+  installs; jump to [Docker](#docker) below.
+- **Local (no Docker)** — install both on your machine:
+  - **Python 3.12+** (works on 3.14 too; only `tiktoken` needed the pin bump)
+  - **[Ollama](https://ollama.com/download)** running locally on port 11434
+  - At least one small model pulled. **Recommended default: `gemma3:1b`**
+    (270m is too small to reliably emit the tool-call XML the agent
+    expects; see the note below):
+    ```bash
+    ollama pull gemma3:1b
+    ```
 
 Recommended models, all &le; 4B parameters:
 
@@ -105,16 +112,22 @@ Open [http://localhost:8000](http://localhost:8000).
 
 ## Docker
 
-Plutarch ships with a `Dockerfile` and a `docker-compose.yml`. The image
-runs the FastAPI backend and serves the static frontend from the same
-container. Ollama is expected to be running on your **host**, not inside
-the container.
+Plutarch ships with a `Dockerfile` and a `docker-compose.yml`. The
+compose stack runs **two containers on an internal bridge network**:
+the Plutarch app and its own Ollama daemon. Only Plutarch's web UI
+(port 8000) is exposed to the host; the Ollama API is reachable only
+from inside the Docker network, so the model server is never exposed
+to your LAN.
 
 ### Prerequisites
 
 - Docker Engine 24+ (or Docker Desktop)
 - Docker Compose v2 (`docker compose` command, not `docker-compose`)
-- Ollama running on the host at `localhost:11434`
+- Optional: NVIDIA Container Toolkit if you want GPU acceleration
+  inside the Ollama container (see "GPU acceleration" below)
+
+You do **not** need Ollama installed on the host — the compose stack
+provides its own.
 
 ### Build and run
 
@@ -124,14 +137,62 @@ cd Plutarch
 docker compose up --build
 ```
 
-The first build takes a couple of minutes because it installs the
-Python dependencies. Subsequent runs are fast because layers are cached.
+The first run downloads the Ollama image (~1 GB) and installs Python
+dependencies. Subsequent runs are fast. Compose waits for the Ollama
+healthcheck to pass before starting Plutarch, so the app will always
+find the daemon on first boot.
 
 Open [http://localhost:8000](http://localhost:8000).
 
-### How the container talks to your host's Ollama
+### How the two containers talk
 
-The compose file sets:
+```yaml
+services:
+  ollama:
+    # no `ports:` block — not exposed to the host
+    networks: [plutarch_net]
+  plutarch:
+    environment:
+      OLLAMA_HOST: http://ollama:11434   # container DNS name
+    networks: [plutarch_net]
+```
+
+`ollama` is resolved via Docker's built-in DNS to the other container.
+No host binding, no port publishing, no `host.docker.internal` needed.
+
+### Pulling models into the container
+
+Because Ollama runs in its own container with its own model store
+(`ollama_data` volume), models pulled on the host are not visible to
+the container. Use the Plutarch model panel to pull, or shell in:
+
+```bash
+docker compose exec ollama ollama pull gemma3:1b
+docker compose exec ollama ollama list
+```
+
+The volume persists across `docker compose down` / `up` cycles. To
+reset the model store, run `docker compose down -v`.
+
+### GPU acceleration
+
+The compose file requests an NVIDIA GPU for the Ollama container. On
+Docker Desktop for Windows with the WSL2 backend, this works out of
+the box if the NVIDIA Container Toolkit is installed. On Linux, install
+the toolkit per
+[NVIDIA's docs](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+
+If you don't have a supported GPU (or the toolkit isn't installed),
+Docker will refuse to start the `ollama` service with a message about
+the nvidia runtime. Fix by commenting out the `deploy:` block in
+`docker-compose.yml` — Ollama will fall back to CPU-only inference.
+
+### Optional: talk to a host-side Ollama instead
+
+If you would rather use an existing Ollama on your host (for example
+to share a large model store already downloaded there), remove the
+`ollama` service from `docker-compose.yml` and change the `plutarch`
+environment to:
 
 ```yaml
 environment:
@@ -140,62 +201,13 @@ extra_hosts:
   - "host.docker.internal:host-gateway"
 ```
 
-That maps `host.docker.internal` to the host on both Docker Desktop
-(Mac/Windows) and modern Linux Docker Engine. If you are on an older
-Linux Docker install where `host-gateway` is not supported, uncomment
-the `network_mode: host` line in `docker-compose.yml` and remove the
-`extra_hosts` block. That gives the container direct access to
-`localhost:11434`.
-
-### Making Ollama reachable from the container
-
-By default the Ollama daemon on Windows and macOS binds to
-`127.0.0.1:11434`, which is **not** reachable from a Docker container
-even via `host.docker.internal`. The container will reach the host
-network interface but Ollama itself won't answer on it. Symptom: the
-app reports "Ollama reports no models on disk" even though
-`ollama list` in your terminal shows models.
-
-Bind Ollama to all interfaces so the container can reach it.
-
-**Windows (PowerShell, as your user):**
-
-```powershell
-setx OLLAMA_HOST "0.0.0.0:11434"
-```
-
-Then quit Ollama from the tray icon and relaunch it. Verify from
-your terminal:
-
-```powershell
-curl http://localhost:11434/api/tags
-```
-
-You should see the JSON list of your pulled models. The container
-will now see the same list.
-
-**macOS (Ollama.app):**
-
-```bash
-launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
-```
-
-Quit and relaunch Ollama.app.
-
-**Linux (systemd):**
-
-```bash
-sudo systemctl edit ollama.service
-```
-
-Add:
-
-```ini
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-```
-
-Then `sudo systemctl daemon-reload && sudo systemctl restart ollama`.
+The host-side Ollama must be bound to an interface the container can
+reach. On Windows and macOS, Ollama defaults to `127.0.0.1:11434`,
+which a container cannot reach even via `host.docker.internal`; you
+would need to set `OLLAMA_HOST=0.0.0.0:11434` on the host — which
+also exposes the model API to any device on your LAN. The sidecar
+setup above avoids this trade-off entirely and is the recommended
+default.
 
 ### Verifying which daemon Plutarch is talking to
 

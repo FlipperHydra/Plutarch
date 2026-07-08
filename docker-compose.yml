@@ -1,30 +1,76 @@
+# Plutarch runs alongside its own Ollama instance in an internal Docker
+# network. Nothing is exposed to the host LAN except Plutarch's own web
+# UI on port 8000; the Ollama daemon is reachable only from other
+# services on the `plutarch_net` bridge network. This avoids binding
+# Ollama to 0.0.0.0 on the host, which would expose the model API to any
+# device on the local network.
+
 services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: plutarch-ollama
+    # No `ports:` block on purpose — keeping Ollama container-internal is
+    # the whole security point. If you ever need to hit it from the host
+    # for debugging, add `ports: ["127.0.0.1:11434:11434"]` (loopback
+    # binding, not 0.0.0.0).
+    volumes:
+      - ollama_data:/root/.ollama  # persistent model store
+    networks:
+      - plutarch_net
+    restart: unless-stopped
+    # GPU acceleration: Ollama auto-detects NVIDIA / AMD when the
+    # container runtime exposes it. Docker Desktop on Windows with the
+    # WSL2 backend + NVIDIA Container Toolkit will honour this block; if
+    # your setup doesn't support it, Docker will refuse to start the
+    # service with a clear error — in that case, comment the whole
+    # `deploy:` block out and Ollama will fall back to CPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # Use `ollama list` as the readiness probe. The upstream
+      # ollama/ollama image is Ubuntu-based but ships without curl or
+      # wget, so an HTTP-based healthcheck would need extra tooling. The
+      # `ollama` CLI is already in the image and talks to the local
+      # daemon over the same socket the API uses, so a successful list
+      # is equivalent to "the daemon is up and serving requests".
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12       # ~2 min grace for cold start
+      start_period: 10s
+
   plutarch:
     build: .
     image: plutarch:latest
     container_name: plutarch
+    depends_on:
+      ollama:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
       PLUTARCH_DATA_DIR: /app/data
-      # Point at the host's Ollama daemon. On Linux without Docker Desktop,
-      # either uncomment `network_mode: host` below or add an --add-host entry.
-      #
-      # IMPORTANT: this line only tells the container WHERE to look. The
-      # Ollama daemon on your host must also be bound to 0.0.0.0 (not the
-      # default 127.0.0.1) so it accepts the connection. Symptom of a
-      # binding mismatch: the app reports "Ollama reports no models on
-      # disk" while `ollama list` in your terminal shows them.
-      # See README > "Making Ollama reachable from the container".
-      OLLAMA_HOST: http://host.docker.internal:11434
+      # Talk to the sidecar Ollama over the internal network. `ollama` is
+      # the Compose service name and resolves via Docker's built-in DNS.
+      # No host binding required, no port exposed to the LAN.
+      OLLAMA_HOST: http://ollama:11434
       PLUTARCH_NUM_CTX: "16384"
       PLUTARCH_COMPACT_THRESHOLD: "2000"
     volumes:
       - plutarch_data:/app/data
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    # network_mode: host   # <- uncomment for Linux with host Ollama
+    networks:
+      - plutarch_net
     restart: unless-stopped
+
+networks:
+  plutarch_net:
+    driver: bridge
 
 volumes:
   plutarch_data:
+  ollama_data:
