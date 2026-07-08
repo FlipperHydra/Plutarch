@@ -106,11 +106,14 @@ CREATE TABLE IF NOT EXISTS custom_models (
 
 DEFAULT_SETTINGS: dict[str, str] = {
     "default_model": "",
-    "tool_disclosure_enabled": "false",
-    # Off by default. When "on", the agent injects a chain-of-thought
-    # instruction so the model produces <think>...</think> reasoning before
-    # its answer. Works on any model. Rendering is gated separately on the
-    # tool-disclosure toggle.
+    # Enable-thinking toggle. Default off. When "on", the agent injects a
+    # chain-of-thought system prompt so the model produces
+    # <think>...</think> reasoning before its answer. Works on any model
+    # because it's a prompt instruction, not Ollama's native thinking API.
+    "thinking_enabled": "off",
+    # Show-steps toggle. Default off. Master visibility switch for
+    # behind-the-scenes chatter — both <think> reasoning blocks and
+    # tool_call/tool_result events render only when this is on.
     "show_steps_enabled": "off",
     "editor_font": "Times New Roman",
     "editor_size": "12",

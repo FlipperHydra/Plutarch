@@ -1,10 +1,18 @@
-/* Chat UI: streaming, tool-call disclosure, top-3 render. */
+/* Chat UI: streaming, step disclosure, top-3 render.
+ *
+ * Two toggles, kept intentionally orthogonal:
+ *   - #thinking-toggle       -> persists settings.thinking_enabled
+ *                              (backend injects CoT prompt when "on")
+ *   - #show-steps-toggle     -> persists settings.show_steps_enabled
+ *                              (client renders think + tool events when "on")
+ * Both default off.
+ */
 window.chat_mod = (() => {
-  const log     = () => document.getElementById("chat-log");
-  const input   = () => document.getElementById("chat-input");
-  const sendBtn = () => document.getElementById("chat-send");
-  const discl   = () => document.getElementById("tool-disclosure");
-  const stepsCB = () => document.getElementById("steps-toggle");
+  const log      = () => document.getElementById("chat-log");
+  const input    = () => document.getElementById("chat-input");
+  const sendBtn  = () => document.getElementById("chat-send");
+  const thinkCB  = () => document.getElementById("thinking-toggle");
+  const stepsCB  = () => document.getElementById("show-steps-toggle");
 
   let onOpenNote = () => {};
 
@@ -18,7 +26,9 @@ window.chat_mod = (() => {
     return el;
   }
 
-  function showDisclosure() { return !!discl().checked; }
+  // Master visibility switch — gates both think blocks AND tool_call
+  // events. If this is off, the chat shows only the model's answer.
+  function stepsVisible() { return !!stepsCB().checked; }
 
   function renderTop3(cards) {
     if (!cards.length) return;
@@ -60,16 +70,13 @@ window.chat_mod = (() => {
       await api.sse("/chat/stream", { message: text }, ev => {
         if (ev.type === "token")     asstMsg.textContent += ev.text;
         else if (ev.type === "think") {
-          // Chain-of-thought output is rendered only when "Show tool calls"
-          // is on. The Show-steps toggle asks the model to reason; the
-          // tool-disclosure toggle controls whether the user sees it.
-          if (showDisclosure()) {
+          if (stepsVisible()) {
             const t = makeMsg("think");
             t.textContent = "[think] " + ev.text;
           }
         }
         else if (ev.type === "tool_call") {
-          if (showDisclosure()) {
+          if (stepsVisible()) {
             const t = makeMsg("tool");
             t.textContent =
               `▶ ${ev.name}(${JSON.stringify(ev.args)})\n` +
@@ -92,9 +99,9 @@ window.chat_mod = (() => {
     }
   }
 
-  async function persistSteps(on) {
+  async function persistSetting(key, on) {
     try {
-      await fetch("/settings/show_steps_enabled", {
+      await fetch(`/settings/${key}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value: on ? "on" : "off" }),
@@ -102,14 +109,21 @@ window.chat_mod = (() => {
     } catch (_) { /* non-fatal */ }
   }
 
-  async function loadStepsState() {
-    try {
-      const r = await fetch("/settings/show_steps_enabled");
-      if (r.ok) {
-        const j = await r.json();
-        stepsCB().checked = j.value === "on";
-      }
-    } catch (_) { /* 404 = not set, default off */ }
+  async function loadToggleStates() {
+    // Read persisted state for both toggles. 404 or error => leave unchecked
+    // (matches the default-off behaviour).
+    for (const [key, cb] of [
+      ["thinking_enabled", thinkCB],
+      ["show_steps_enabled", stepsCB],
+    ]) {
+      try {
+        const r = await fetch(`/settings/${key}`);
+        if (r.ok) {
+          const j = await r.json();
+          cb().checked = j.value === "on";
+        }
+      } catch (_) { /* leave default */ }
+    }
   }
 
   function wire() {
@@ -117,9 +131,12 @@ window.chat_mod = (() => {
     input().addEventListener("keydown", e => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
     });
-    stepsCB().addEventListener("change", () => persistSteps(stepsCB().checked));
-    loadStepsState();
+    thinkCB().addEventListener("change",
+      () => persistSetting("thinking_enabled", thinkCB().checked));
+    stepsCB().addEventListener("change",
+      () => persistSetting("show_steps_enabled", stepsCB().checked));
+    loadToggleStates();
   }
 
-  return { wire, setOpenNoteHandler, loadStepsState };
+  return { wire, setOpenNoteHandler, loadToggleStates };
 })();

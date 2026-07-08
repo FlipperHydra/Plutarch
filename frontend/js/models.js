@@ -32,7 +32,10 @@ window.models_mod = (() => {
       const marks = [];
       if (!m.pulled)     marks.push("(not pulled)");
       if (m.is_default)  marks.push("★ default");
-      opt.textContent = m.name + (marks.length ? "  " + marks.join(" ") : "");
+      // Prefix pulled models with a ✓ so users can see at a glance which are
+      // already on disk and ready to load without a download.
+      const prefix = m.pulled ? "✓ " : "";
+      opt.textContent = prefix + m.name + (marks.length ? "  " + marks.join(" ") : "");
       if (!m.pulled) opt.style.color = "#a89f92";
       s.appendChild(opt);
     }
@@ -148,6 +151,10 @@ window.models_mod = (() => {
     try {
       await pullWithProgress(name);
       setPill("grey", "pulled");
+      // Brief success confirmation in the popup before it closes, so the
+      // user gets clear feedback that the download completed successfully.
+      popupLabel().textContent = `${name} pulled ✓`;
+      await new Promise((r) => setTimeout(r, 1500));
     } catch (e) {
       setPill("red", "pull failed");
       alert("Pull failed: " + e.message +

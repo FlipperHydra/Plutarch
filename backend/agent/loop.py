@@ -152,7 +152,9 @@ async def run_turn(
     # Chain-of-thought toggle. Universal — works on any model by asking it
     # to wrap reasoning in <think>...</think>. We strip those blocks before
     # feeding tokens into the tool processor or storing them in history.
-    cot_setting = (await db.get_setting("show_steps_enabled")) or "off"
+    # Whether the reasoning is *rendered* is a separate concern (frontend
+    # gates it on the show-steps toggle).
+    cot_setting = (await db.get_setting("thinking_enabled")) or "off"
     cot_enabled = cot_setting == "on"
 
     system_messages = build_system_messages(registry, cot=cot_enabled)

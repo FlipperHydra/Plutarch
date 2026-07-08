@@ -204,16 +204,30 @@ Override any of these under `environment:` in `docker-compose.yml`:
    prunes to at most 10 candidates, calls `score_candidate` on each, and
    surfaces the top 3 with reasons and open-note buttons.
 
-   The chat sidebar has two toggles:
+   The chat sidebar has two independent toggles (both default **off**):
 
-   - **Show tool calls** — renders tool XML, tool results, and the model's
-     reasoning inline in the chat.
-   - **Show steps** — asks the model to reason step by step (chain of
-     thought) before its answer, wrapping the reasoning in
+   - **Enable thinking** — asks the model to reason step by step (chain
+     of thought) before its answer, wrapping the reasoning in
      `<think>...</think>` tags. This is a prompt-level instruction, not
-     Ollama's native thinking API, so it works on every model. The
-     reasoning is only rendered when **Show tool calls** is also on.
-     Tagging and compaction never use CoT, regardless of the toggle.
+     Ollama's native thinking API, so it works on every model. Tagging
+     and compaction never use CoT, regardless of this toggle.
+   - **Show steps** — master visibility switch for the model's inner
+     work. When on, the chat renders `<think>` blocks *and* tool XML /
+     tool results inline. When off, only the final answer is shown
+     (tool calls still run — they're just hidden).
+
+   The two toggles are orthogonal:
+
+   | Enable thinking | Show steps | What you see                           |
+   | --------------- | ---------- | -------------------------------------- |
+   | off             | off        | direct answer only                     |
+   | off             | on         | tool calls + answer (no reasoning)     |
+   | on              | off        | direct answer only (CoT hidden)        |
+   | on              | on         | reasoning + tool calls + answer        |
+
+   In the model dropdown, pulled models are prefixed with `✓` so you
+   can see at a glance which are on disk. Unpulled entries are shown
+   greyed out with `(not pulled)`.
 6. Press **Tag** at any point during a session to run the tagging pass
    on-demand instead of waiting for Sleep. Progress is shown in the
    model popup. Notes already tagged (whether by an earlier Tag click

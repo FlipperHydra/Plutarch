@@ -38,12 +38,12 @@
     <aside id="chat-sidebar" class="sidebar right">
       <div class="sidebar-head">
         <span>Chat</span>
-        <label class="toggle-line">
-          <input type="checkbox" id="tool-disclosure" />
-          <span>Show tool calls</span>
+        <label class="toggle-line" title="Ask the model to reason step by step before answering. Off by default.">
+          <input type="checkbox" id="thinking-toggle" />
+          <span>Enable thinking</span>
         </label>
-        <label class="toggle-line" title="Ask the model to reason step by step before answering. The reasoning is shown alongside tool calls when 'Show tool calls' is on.">
-          <input type="checkbox" id="steps-toggle" />
+        <label class="toggle-line" title="Show the model's reasoning and tool calls inline in the chat. Off by default.">
+          <input type="checkbox" id="show-steps-toggle" />
           <span>Show steps</span>
         </label>
       </div>
