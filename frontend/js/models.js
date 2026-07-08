@@ -20,6 +20,21 @@ window.models_mod = (() => {
   // decide whether to pull first without re-hitting the API.
   const pulledMap = new Map();
 
+  // Last-known loaded model name, updated by refresh(). Used together with
+  // pulledMap to compute the snapshot dispatched via `plutarch:model`.
+  let loadedName = "";
+
+  // Dispatch a `plutarch:model` custom event carrying the current snapshot
+  // so chat.js (and any other subscriber) can react without polling.
+  // Called at the end of any function that changes model state.
+  function dispatchModelState() {
+    let pulledCount = 0;
+    for (const v of pulledMap.values()) if (v === true) pulledCount++;
+    window.dispatchEvent(new CustomEvent("plutarch:model", {
+      detail: { loaded: loadedName || "", pulledCount },
+    }));
+  }
+
   async function refresh() {
     const data = await api.availableModels();
     const s = sel();
@@ -42,10 +57,13 @@ window.models_mod = (() => {
     if (data.loaded) {
       s.value = data.loaded;
       setPill("green", data.loaded);
+      loadedName = data.loaded;
     } else {
       setPill("grey", "no model");
+      loadedName = "";
     }
     await updateVram();
+    dispatchModelState();
   }
 
   async function updateVram() {
@@ -104,6 +122,9 @@ window.models_mod = (() => {
       try { await api.setDefault(name); } catch (_) {}
     }
     await refresh();
+    // refresh() dispatches, but be explicit in case the API race meant
+    // `data.loaded` hadn't updated server-side yet.
+    dispatchModelState();
   }
 
   // Streams the pull and resolves when Ollama reports the final "success"
@@ -171,6 +192,7 @@ window.models_mod = (() => {
     } finally {
       hideProgress();
       await refresh();
+      dispatchModelState();
     }
   }
 
@@ -180,7 +202,16 @@ window.models_mod = (() => {
     }
     await api.manualAddModel(name);
     await refresh();
+    dispatchModelState();
   }
 
-  return { refresh, updateVram, loadSelected, pullSelected, manualSave, setPill, showProgress, hideProgress };
+  // Read-only snapshot for callers that need to paint before an async refresh
+  // completes (e.g. main.js initial chat overlay paint).
+  function snapshot() {
+    let pulledCount = 0;
+    for (const v of pulledMap.values()) if (v === true) pulledCount++;
+    return { loaded: loadedName || "", pulledCount };
+  }
+
+  return { refresh, updateVram, loadSelected, pullSelected, manualSave, setPill, showProgress, hideProgress, snapshot };
 })();

@@ -1,4 +1,4 @@
-/* Chat UI: streaming, step disclosure, top-3 render.
+/* Chat UI: streaming, step disclosure, top-3 render, model-gating overlay.
  *
  * Two toggles, kept intentionally orthogonal:
  *   - #thinking-toggle       -> persists settings.thinking_enabled
@@ -6,6 +6,13 @@
  *   - #show-steps-toggle     -> persists settings.show_steps_enabled
  *                              (client renders think + tool events when "on")
  * Both default off.
+ *
+ * Model gating (Q1=C flow):
+ *   - Zero models pulled to disk    -> overlay + Send disabled
+ *   - Models pulled but none loaded -> overlay + Send disabled
+ *   - Model loaded                  -> normal chat
+ * State is refreshed on `plutarch:model` custom events dispatched by
+ * models.js after any change (refresh, pull, load, manual-add). No polling.
  */
 window.chat_mod = (() => {
   const log      = () => document.getElementById("chat-log");
@@ -17,6 +24,102 @@ window.chat_mod = (() => {
   let onOpenNote = () => {};
 
   function setOpenNoteHandler(fn) { onOpenNote = fn; }
+
+  // ---- Model-gating overlay -------------------------------------------
+  // Current known snapshot of models state. Populated by updateModelState().
+  let modelState = { loaded: "", pulledCount: 0 };
+
+  function chatLogEl() { return document.getElementById("chat-log"); }
+  function overlayEl() { return document.getElementById("chat-overlay"); }
+
+  function renderOverlay() {
+    const host = chatLogEl();
+    if (!host) return;
+    let ov = overlayEl();
+
+    // Decide the current gating state.
+    const loaded = !!modelState.loaded;
+    const anyPulled = modelState.pulledCount > 0;
+
+    if (loaded) {
+      // Normal chat — tear down the overlay if present.
+      if (ov) ov.remove();
+      setSendEnabled(true, "");
+      return;
+    }
+
+    // Need an overlay. Create if missing.
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "chat-overlay";
+      ov.className = "chat-overlay";
+      const box = document.createElement("div");
+      box.className = "chat-overlay-box";
+      box.innerHTML = `
+        <h4></h4>
+        <p></p>
+        <button class="ghost overlay-cta">Open model panel</button>`;
+      box.querySelector(".overlay-cta").addEventListener("click", openModelPanel);
+      ov.appendChild(box);
+      host.appendChild(ov);
+    }
+
+    const h = ov.querySelector("h4");
+    const p = ov.querySelector("p");
+    if (!anyPulled) {
+      // Exact copy as specified by the product spec.
+      ov.classList.add("no-pulled");
+      ov.classList.remove("no-loaded");
+      h.textContent = "Warning No Model Pulled";
+      p.textContent = "If no model is pulled chat based interactions will be left unavailable.";
+      setSendEnabled(false, "No model pulled \u2014 pull one from the model panel to chat.");
+    } else {
+      // Models exist on disk but none loaded (Q1=C third state).
+      ov.classList.add("no-loaded");
+      ov.classList.remove("no-pulled");
+      h.textContent = "No Model Loaded";
+      p.textContent = "Load a pulled model from the model panel to start chatting.";
+      setSendEnabled(false, "No model loaded \u2014 open the model panel to load one.");
+    }
+  }
+
+  function openModelPanel() {
+    const panel = document.getElementById("model-panel");
+    if (panel) panel.classList.remove("hidden");
+  }
+
+  function setSendEnabled(enabled, tooltip) {
+    const btn = sendBtn();
+    const ta = input();
+    if (!btn || !ta) return;
+    // Do not override the transient disabled state set during an in-flight
+    // send — the send() coroutine handles its own re-enable. We only clear
+    // the persistent gating flag.
+    btn.dataset.gatedDisabled = enabled ? "" : "1";
+    ta.dataset.gatedDisabled = enabled ? "" : "1";
+    if (!enabled) {
+      btn.disabled = true;
+      ta.disabled = true;
+    } else if (!btn.dataset.sending) {
+      btn.disabled = false;
+      ta.disabled = false;
+    }
+    btn.title = tooltip || "";
+    ta.title = tooltip || "";
+  }
+
+  /**
+   * Public entry for models.js (or main.js) to push model-state updates.
+   * `snapshot` = { loaded: string, pulledCount: number }.
+   * Also invoked implicitly via a window-level custom event handler.
+   */
+  function updateModelState(snapshot) {
+    modelState = {
+      loaded: (snapshot && snapshot.loaded) || "",
+      pulledCount: (snapshot && Number(snapshot.pulledCount)) || 0,
+    };
+    renderOverlay();
+  }
 
   function makeMsg(cls) {
     const el = document.createElement("div");
@@ -57,10 +160,14 @@ window.chat_mod = (() => {
   }
 
   async function send() {
+    // Gating guard: if the overlay is up, refuse to send. This is a
+    // belt-and-braces check on top of the disabled Send button.
+    if (sendBtn().dataset.gatedDisabled === "1") return;
     const text = input().value.trim();
     if (!text) return;
     input().value = "";
     sendBtn().disabled = true;
+    sendBtn().dataset.sending = "1";
 
     const userMsg = makeMsg("user"); userMsg.textContent = text;
     // The assistant may produce text over multiple tool-agent rounds. We
@@ -125,7 +232,11 @@ window.chat_mod = (() => {
       asstMsg.textContent += `\n[error] ${e.message}`;
       console.error("[chat] stream failed:", e);
     } finally {
-      sendBtn().disabled = false;
+      delete sendBtn().dataset.sending;
+      // Only re-enable if the gating overlay isn't currently blocking.
+      if (sendBtn().dataset.gatedDisabled !== "1") {
+        sendBtn().disabled = false;
+      }
     }
   }
 
@@ -166,7 +277,17 @@ window.chat_mod = (() => {
     stepsCB().addEventListener("change",
       () => persistSetting("show_steps_enabled", stepsCB().checked));
     loadToggleStates();
+
+    // Subscribe to model-state changes. `models.js` dispatches this after
+    // refresh / load / pull / manual-add so we don't need to poll.
+    window.addEventListener("plutarch:model", (ev) => {
+      updateModelState(ev.detail || {});
+    });
+    // Initial paint: render whatever state we already have. main.js calls
+    // updateModelState() explicitly once models_mod.refresh() completes
+    // during boot, but this covers the case where the event fires first.
+    renderOverlay();
   }
 
-  return { wire, setOpenNoteHandler, loadToggleStates };
+  return { wire, setOpenNoteHandler, loadToggleStates, updateModelState };
 })();

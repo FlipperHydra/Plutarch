@@ -32,24 +32,39 @@
 
     <section class="editor-column">
       <input id="note-title" class="note-title" placeholder="Untitled" />
+      <!-- Editor formatting toolbar. Buttons are wired up by editor.js after
+           TipTap initialises so keyboard shortcuts still work if JS fails. -->
+      <div id="editor-toolbar" class="editor-toolbar" role="toolbar" aria-label="Text formatting">
+        <button type="button" data-cmd="bold"       title="Bold (Ctrl+B)"          aria-label="Bold"><b>B</b></button>
+        <button type="button" data-cmd="italic"     title="Italic (Ctrl+I)"        aria-label="Italic"><i>I</i></button>
+        <span class="tb-sep" aria-hidden="true"></span>
+        <button type="button" data-cmd="h1"         title="Heading 1"              aria-label="Heading 1">H1</button>
+        <button type="button" data-cmd="h2"         title="Heading 2"              aria-label="Heading 2">H2</button>
+        <span class="tb-sep" aria-hidden="true"></span>
+        <button type="button" data-cmd="bulletList" title="Bulleted list"          aria-label="Bulleted list">• List</button>
+        <button type="button" data-cmd="orderedList" title="Numbered list"         aria-label="Numbered list">1. List</button>
+        <button type="button" data-cmd="blockquote" title="Blockquote"             aria-label="Blockquote">&ldquo; Quote</button>
+      </div>
       <div id="editor" class="editor"></div>
     </section>
 
     <aside id="chat-sidebar" class="sidebar right">
       <div class="sidebar-head">
         <span>Chat</span>
-        <label class="toggle-line" title="Ask the model to reason step by step before answering. Off by default.">
+        <label class="toggle-line" title="Ask the model to reason step-by-step before answering. Off by default. Slower, sometimes more accurate.">
           <input type="checkbox" id="thinking-toggle" />
           <span>Enable thinking</span>
         </label>
-        <label class="toggle-line" title="Show the model's reasoning and tool calls inline in the chat. Off by default.">
+        <label class="toggle-line" title="Show the model's internal reasoning and tool calls inline. Requires thinking to be enabled to see any reasoning.">
           <input type="checkbox" id="show-steps-toggle" />
-          <span>Show steps</span>
+          <span>Show thinking &amp; tool calls</span>
         </label>
       </div>
       <div id="chat-log" class="chat-log"></div>
       <div class="chat-input">
-        <textarea id="chat-input" rows="2" placeholder="Ask about a past note..."></textarea>
+        <textarea id="chat-input" rows="3" placeholder="Ask about a past note..."
+                  title="Enter to send, Shift+Enter for a new line"
+                  aria-label="Chat message"></textarea>
         <button id="chat-send" class="primary">Send</button>
       </div>
     </aside>
@@ -86,9 +101,9 @@
   </div>
 
   <!-- Manual add dialog -->
-  <div id="manual-dialog" class="modal hidden">
+  <div id="manual-dialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="manual-dialog-title" aria-hidden="true">
     <div class="modal-inner">
-      <h3>Add an Ollama model</h3>
+      <h3 id="manual-dialog-title">Add an Ollama model</h3>
       <p class="muted">Type any tag from the Ollama library, e.g. <code>llama3.2:3b</code>.</p>
       <input id="manual-input" placeholder="model-name:tag" />
       <p id="manual-err" class="err hidden"></p>
@@ -100,9 +115,9 @@
   </div>
 
   <!-- Sleep no-default dialog -->
-  <div id="sleep-choice" class="modal hidden">
+  <div id="sleep-choice" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sleep-choice-title" aria-hidden="true">
     <div class="modal-inner">
-      <h3>No default model set</h3>
+      <h3 id="sleep-choice-title">No default model set</h3>
       <p>Tagging your notes needs a small model. Choose one option:</p>
       <div class="col">
         <button id="sleep-use-current"  class="primary">Use current model this one time</button>

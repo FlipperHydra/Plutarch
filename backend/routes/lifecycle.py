@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from db import db
@@ -32,14 +32,14 @@ async def status():
     return app_state.snapshot()
 
 
-@router.post("/wake")
-async def wake():
-    async with app_state.lock:
-        if app_state.state in (State.WAKING, State.ACTIVE):
-            return app_state.snapshot()
-        app_state.state = State.WAKING
-        app_state.last_error = ""
-
+async def _finalize_wake() -> None:
+    """Background wake work: open DB, wipe stale session, optionally warm the
+    default model, then transition to ACTIVE. Runs OUTSIDE the HTTP request
+    so the /wake POST returns immediately — previously the endpoint blocked
+    for the full model load (routinely 15-60s on cold Ollama), which caused
+    the frontend polling loop to time out even though the wake would have
+    eventually succeeded server-side.
+    """
     try:
         await db.open()
 
@@ -51,19 +51,53 @@ async def wake():
         app_state.default_model = default_model
 
         if default_model:
+            # Skip the warm-up if the default was never pulled to disk. This
+            # is the very common bootstrap case: user set a default before
+            # pulling, or `ollama rm`'d the model since last session. Trying
+            # to `generate` on a missing model would either implicit-pull
+            # (slow, no progress feedback) or error — either way, the wake
+            # would appear to hang. Better to enter ACTIVE with no loaded
+            # model and let the user pull explicitly from the model panel.
             try:
-                await ollama_client.load(default_model)
-                app_state.loaded_model = default_model
-            except Exception as e:
-                app_state.last_error = f"default model load failed: {e}"
+                local = set(await ollama_client.list_local())
+            except Exception:
+                local = set()
+            if default_model not in local:
+                app_state.last_error = (
+                    f"default model '{default_model}' is not pulled yet — "
+                    f"open the model panel to pull it."
+                )
                 app_state.loaded_model = ""
+            else:
+                try:
+                    await ollama_client.load(default_model)
+                    app_state.loaded_model = default_model
+                except Exception as e:
+                    app_state.last_error = f"default model load failed: {e}"
+                    app_state.loaded_model = ""
 
         app_state.tagging_queue_size = await count_pending()
         app_state.state = State.ACTIVE
     except Exception as e:
         app_state.last_error = str(e)
         app_state.state = State.COLD
-        raise HTTPException(500, detail=str(e))
+
+
+@router.post("/wake")
+async def wake():
+    """Kick off the wake sequence and return immediately.
+
+    The client polls /status until state == 'active'. This decouples the
+    HTTP request from the (potentially long) model warm-up.
+    """
+    async with app_state.lock:
+        if app_state.state in (State.WAKING, State.ACTIVE):
+            return app_state.snapshot()
+        app_state.state = State.WAKING
+        app_state.last_error = ""
+
+    # Fire and forget; _finalize_wake owns all subsequent state transitions.
+    asyncio.create_task(_finalize_wake())
     return app_state.snapshot()
 
 

@@ -39,7 +39,17 @@
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+/* Give the "Use as default" toggle enough vertical breathing room that its
+   two-line label can't visually collide with the button below it. */
+.model-panel .toggle-line {
+  line-height: 1.4;
+  padding: 4px 0;
+  align-items: flex-start;
+}
+.model-panel .toggle-line input[type="checkbox"] {
+  margin-top: 2px;  /* nudge the box to align with the first line of text */
 }
 .model-panel select {
   padding: 6px;

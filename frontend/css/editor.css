@@ -13,12 +13,59 @@
   outline: none;
 }
 
+/* Formatting toolbar above the editor. Rendered as a horizontal strip that
+   attaches visually to the editor — rounded top corners, no gap. */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  flex-wrap: wrap;
+}
+.editor-toolbar button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+  min-width: 28px;
+  line-height: 1.2;
+}
+.editor-toolbar button:hover {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: var(--border);
+}
+.editor-toolbar button.active {
+  background: rgba(58, 90, 156, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.editor-toolbar button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.editor-toolbar .tb-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
 .editor {
   flex: 1;
   overflow-y: auto;
   background: white;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  /* When the toolbar is present its bottom edge butts against the editor's
+     top edge; adjust border-radius so the whole thing looks like one card. */
+  border-radius: 0 0 var(--radius) var(--radius);
   padding: 24px 32px;
   font-family: var(--font-note);
   font-size: 16px;

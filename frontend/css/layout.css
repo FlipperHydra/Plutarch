@@ -53,6 +53,54 @@ body.app { display: flex; flex-direction: column; height: 100vh; }
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;  /* anchor for the .chat-overlay */
+}
+
+/* Chat gating overlay — shown when no model is available for chatting.
+   Greys out the entire chat panel body and centers a warning box.
+   Two states:
+     .chat-overlay.no-pulled  — zero models pulled to disk (blocking)
+     .chat-overlay.no-loaded  — models exist but none loaded (recoverable) */
+.chat-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(246, 245, 241, 0.82);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 5;
+}
+.chat-overlay-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--warn);
+  border-radius: 10px;
+  padding: 16px 18px;
+  max-width: 300px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.chat-overlay-box h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--warn);
+}
+.chat-overlay-box p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.45;
+}
+.chat-overlay-box .overlay-cta {
+  font-size: 12px;
+}
+/* Send-disabled tooltip visual hint. */
+.chat-input textarea:disabled,
+.chat-input button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .chat-input {
   border-top: 1px solid var(--border);
@@ -71,6 +119,13 @@ body.app { display: flex; flex-direction: column; height: 100vh; }
   font-size: 14px;
 }
 
+/* Toggled-state chip: used on the history sidebar toggle button to indicate
+   whether the sidebar is currently visible. */
+.topbar button.ghost.toggled {
+  background: rgba(0,0,0,0.06);
+  border-color: var(--ink);
+}
+
 /* Chat bubbles */
 .msg {
   padding: 8px 10px;
@@ -87,6 +142,14 @@ body.app { display: flex; flex-direction: column; height: 100vh; }
 /* Placeholder assistant bubble when the model returned no visible content.
    Needs to override .msg.assistant's color (specificity 0,0,2,0). */
 .msg.assistant.muted { color: var(--muted); font-style: italic; font-size: 13px; }
+
+/* Bubble enter animation — gentle fade-slide so warnings and new messages
+   don't snap in. Gated by prefers-reduced-motion in theme.css. */
+.msg { animation: msg-in 140ms ease-out; }
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
 
 .top3-card {
   align-self: flex-start;
@@ -122,7 +185,7 @@ body.app { display: flex; flex-direction: column; height: 100vh; }
 
 .toggle-line { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
 
-/* History rows */
+/* History rows — focusable via keyboard (role=button, tabindex=0 in JS). */
 .history-row {
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
@@ -130,6 +193,11 @@ body.app { display: flex; flex-direction: column; height: 100vh; }
 }
 .history-row:hover { background: rgba(0,0,0,0.03); }
 .history-row.active { background: #e8e2d0; }
+.history-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(58, 90, 156, 0.06);
+}
 .history-row .h-title { font-weight: 500; }
 .history-row .h-time  { color: var(--muted); font-size: 11px; }
 .history-group {

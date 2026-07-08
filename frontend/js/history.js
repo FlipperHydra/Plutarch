@@ -33,7 +33,20 @@ window.history_mod = (() => {
       row.innerHTML = `<div class="h-title"></div><div class="h-time"></div>`;
       row.querySelector(".h-title").textContent = n.title || "Untitled";
       row.querySelector(".h-time").textContent = n.modified_at;
+      // Accessibility: rows act as buttons — keyboard focusable and
+      // activatable via Enter or Space. `aria-current` marks the active note
+      // for assistive tech (screen readers announce "current page").
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      if (n.id === activeId) row.setAttribute("aria-current", "true");
+      row.setAttribute("aria-label", `Open note: ${n.title || "Untitled"}`);
       row.addEventListener("click", () => onOpen(n.id));
+      row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(n.id);
+        }
+      });
       list.appendChild(row);
     }
   }
