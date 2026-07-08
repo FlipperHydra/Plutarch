@@ -5,6 +5,7 @@ import json
 import re
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -210,6 +211,59 @@ async def diagnostic():
         "record_count": len(raw),
         "raw": raw,
     }
+
+
+@router.get("/ping")
+async def ping():
+    """Confirm the sidecar Ollama daemon is who we think it is.
+
+    This bypasses ollama-python entirely and hits the daemon directly
+    via raw httpx. If ``/available`` reports models but ``/select``
+    fails to load them, the question becomes: "are both talking to the
+    same server?". This endpoint answers it unambiguously by dialling
+    the configured ``OLLAMA_HOST`` with a plain HTTP GET.
+
+    Fields:
+      * ``ollama_host``     — the URL Plutarch is configured to dial.
+      * ``reachable``       — True if the socket accepted a connection.
+      * ``http_status``     — HTTP status of GET ``/api/tags``.
+      * ``server_header``   — the ``Server`` response header, if any.
+      * ``model_count``     — number of tags the daemon reports.
+      * ``model_names``     — the raw tag list (server's own
+                              ``name`` field, un-normalised).
+      * ``error``           — exception string on failure, else "".
+
+    Compare ``model_names`` here against ``ollama list`` on the host
+    machine — if they disagree, Plutarch and your terminal are
+    pointed at different daemons.
+    """
+    host = ollama_client.ollama_host
+    url = host.rstrip("/") + "/api/tags"
+    out = {
+        "ollama_host": host,
+        "reachable": False,
+        "http_status": None,
+        "server_header": None,
+        "model_count": 0,
+        "model_names": [],
+        "error": "",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get(url)
+            out["reachable"] = True
+            out["http_status"] = r.status_code
+            out["server_header"] = r.headers.get("server")
+            if r.status_code == 200:
+                data = r.json()
+                models = data.get("models") or []
+                out["model_count"] = len(models)
+                out["model_names"] = [
+                    m.get("name") or m.get("model") for m in models
+                ]
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return out
 
 
 @router.post("/pull")

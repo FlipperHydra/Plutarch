@@ -93,16 +93,19 @@ def normalize_model_name(name: str) -> str:
 
 class OllamaClient:
     def __init__(self) -> None:
-        # Resolve the effective host explicitly so we can surface it to
-        # the UI. The ollama client reads OLLAMA_HOST from env, defaulting
-        # to http://127.0.0.1:11434. When Plutarch runs in Docker on
-        # Linux this default points at the *container* loopback — not the
-        # host machine — which is a common source of "I pulled it but
-        # the app says no" reports.
+        # Resolve the effective host explicitly and pass it into the
+        # AsyncClient constructor so the value we surface to the UI is
+        # guaranteed to be the exact value the HTTP client dials. The
+        # ollama library will otherwise re-read OLLAMA_HOST from env at
+        # construction time — normally the same value, but subtly
+        # different if env changed after import or if the library's
+        # host-normaliser reshapes the string. Passing host= explicitly
+        # eliminates any possibility of the UI diagnostic and the wire
+        # request talking about two different daemons.
         self.ollama_host: str = (
             os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
         )
-        self._client = ollama.AsyncClient()
+        self._client = ollama.AsyncClient(host=self.ollama_host)
 
     # --- Discovery --------------------------------------------------------
     # Cache of the last successful list() error so callers (routes/state)
@@ -206,16 +209,16 @@ class OllamaClient:
             POST /api/generate  { model, keep_alive }        # no prompt
             POST /api/chat      { model, messages: [], keep_alive }
 
-        The ollama-python client's ``generate()`` builds its JSON body
-        with ``exclude_none=True``, so passing ``prompt=None`` (the
-        default) makes the field disappear from the wire payload —
-        which is exactly the load-only shape.
+        We use the ``chat(messages=[])`` form because it is the more
+        widely-supported warm shape across Ollama server versions.
+        Older Ollama server builds have accepted ``generate`` with a
+        missing prompt inconsistently, whereas the empty-messages chat
+        path has been stable since the /api/chat endpoint shipped.
 
-        Previously this method passed ``prompt=""``, which the client
-        serialises to ``{"prompt": ""}`` (empty string is not None).
-        Some Ollama server builds accept that as a warm; others reject
-        it with a 400 / runner error. The ``prompt=None`` form is the
-        documented, version-independent way.
+        Under the hood, ollama-python 0.6.x builds the request body with
+        ``exclude_none=True``, so any optional field we don't pass is
+        omitted from the wire payload — matching the documented shape
+        byte-for-byte.
 
         We wrap in a try/except and re-raise with a clearer prefix so
         the /models/select 500 response tells the user which step
@@ -223,12 +226,12 @@ class OllamaClient:
         internals with no context).
         """
         try:
-            await self._client.generate(
-                model=name, prompt=None, keep_alive="30m"
+            await self._client.chat(
+                model=name, messages=[], keep_alive="30m"
             )
         except Exception as e:
             log.warning(
-                "ollama.generate(load) failed for model=%r host=%s: %s: %s",
+                "ollama.chat(load) failed for model=%r host=%s: %s: %s",
                 name, self.ollama_host, type(e).__name__, e,
             )
             raise RuntimeError(
@@ -239,21 +242,21 @@ class OllamaClient:
     async def unload(self, name: str) -> None:
         """Force eviction by sending keep_alive=0 to the model.
 
-        Same rationale as ``load()`` — pass ``prompt=None`` so the
-        client omits the field entirely rather than sending an empty
-        string. Unload errors are still swallowed because "model wasn't
-        loaded" is a valid pre-state we don't want to fail on.
+        Same rationale as ``load()`` — use ``chat(messages=[])`` for the
+        no-op warm/evict shape. Unload errors are still swallowed
+        because "model wasn't loaded" is a valid pre-state we don't
+        want to fail on.
         """
         if not name:
             return
         try:
-            await self._client.generate(
-                model=name, prompt=None, keep_alive=0
+            await self._client.chat(
+                model=name, messages=[], keep_alive=0
             )
         except Exception as e:
             # Log at debug — an already-evicted model is not an error.
             log.debug(
-                "ollama.generate(unload) for model=%r ignored: %s: %s",
+                "ollama.chat(unload) for model=%r ignored: %s: %s",
                 name, type(e).__name__, e,
             )
 

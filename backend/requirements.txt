@@ -1,6 +1,6 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
-ollama==0.3.3
+ollama==0.6.2
 tiktoken>=0.7.0
 psutil==6.0.0
 python-multipart==0.0.9
