@@ -110,7 +110,24 @@ window.models_mod = (() => {
       setTimeout(() => setPill("grey", name), 3000);
     } catch (e) {
       setPill("red", "failed");
-      alert("Model setup failed: " + e.message +
+      // Special-case the 409 "not pulled" diagnostic: show what Ollama
+      // actually reports so the user can tell whether it's a tag mismatch,
+      // a daemon-unreachable, or a genuinely-missing model.
+      let extra = "";
+      if (e && e.status === 409 && e.detail && typeof e.detail === "object") {
+        const avail = Array.isArray(e.detail.available) ? e.detail.available : [];
+        const listErr = e.detail.list_error || "";
+        if (listErr) {
+          extra = `\n\nOllama returned an error while listing models: ${listErr}` +
+                  `\nIs the daemon running? Try \`ollama list\` in a terminal.`;
+        } else if (avail.length === 0) {
+          extra = "\n\nOllama reports no models on disk. Try `ollama list`.";
+        } else {
+          extra = `\n\nOllama reports these on disk:\n  \u2022 ` + avail.join("\n  \u2022 ") +
+                  `\n\nRequested (normalized): ${e.detail.requested_normalized || ""}`;
+        }
+      }
+      alert("Model setup failed: " + e.message + extra +
             "\n\nCheck that Ollama is running (ollama serve) and reachable at " +
             "http://127.0.0.1:11434.");
       setTimeout(() => refresh(), 3000);

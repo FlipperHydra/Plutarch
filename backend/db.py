@@ -102,6 +102,19 @@ CREATE TABLE IF NOT EXISTS custom_models (
   name     TEXT PRIMARY KEY,
   added_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Audit log of successful pulls we observed. NOT the source of truth for
+-- "is X on disk" — that remains Ollama's own store, queried via
+-- ``ollama.list()``. This table only exists so users can see "I did pull X
+-- on Tuesday" even after an app restart, and so we can debug cases where
+-- Ollama's list omits a model we know we pulled.
+CREATE TABLE IF NOT EXISTS pull_audit (
+  name          TEXT NOT NULL,
+  normalized    TEXT NOT NULL,
+  pulled_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (normalized)
+);
+CREATE INDEX IF NOT EXISTS idx_pull_audit_at ON pull_audit(pulled_at DESC);
 """
 
 DEFAULT_SETTINGS: dict[str, str] = {
@@ -191,6 +204,35 @@ class Database:
             (key, value),
         )
         await self.conn.commit()
+
+    # --- Pull audit helpers -----------------------------------------------
+    async def record_pull(self, name: str) -> None:
+        """Record a successful pull for ``name`` in the audit table.
+
+        Idempotent per normalized name — subsequent pulls of the same model
+        update the ``pulled_at`` timestamp so the last-observed pull time
+        stays current. Never raises; callers wrap in try/except but this
+        method already commits atomically.
+        """
+        # Import here to avoid a circular import at module load time.
+        from ollama_client import normalize_model_name
+        norm = normalize_model_name(name)
+        await self.conn.execute(
+            "INSERT INTO pull_audit(name, normalized) VALUES(?, ?) "
+            "ON CONFLICT(normalized) DO UPDATE SET "
+            "  name = excluded.name, pulled_at = datetime('now')",
+            (name, norm),
+        )
+        await self.conn.commit()
+
+    async def list_pull_audit(self) -> list[dict]:
+        """Return the audit log ordered by most-recent first. Diagnostic only."""
+        async with self.conn.execute(
+            "SELECT name, normalized, pulled_at FROM pull_audit "
+            "ORDER BY pulled_at DESC"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 # Module-level singleton used by routes.

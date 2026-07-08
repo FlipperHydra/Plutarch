@@ -8,9 +8,30 @@ window.api = (() => {
       ...opts,
     });
     if (!r.ok) {
+      // FastAPI wraps HTTPException.detail into `{detail: ...}`. Detail can
+      // be a plain string (traditional case) or a structured object (used by
+      // /models/select 409 to include the requested/available diagnostic).
+      // Format both usefully; also attach the parsed detail to the error so
+      // callers can render actionable UI if they want.
       let msg = `${r.status} ${r.statusText}`;
-      try { const j = await r.json(); if (j.detail) msg = j.detail; } catch (_) {}
-      throw new Error(msg);
+      let detail = null;
+      try {
+        const j = await r.json();
+        if (j.detail !== undefined) {
+          detail = j.detail;
+          if (typeof detail === "string") {
+            msg = detail;
+          } else if (detail && typeof detail === "object") {
+            // Prefer the `error` field if the object exposes one; otherwise
+            // stringify so the user still sees the payload.
+            msg = detail.error || detail.message || JSON.stringify(detail);
+          }
+        }
+      } catch (_) { /* body was not JSON */ }
+      const err = new Error(msg);
+      err.status = r.status;
+      err.detail = detail;
+      throw err;
     }
     if (r.status === 204) return null;
     const ct = r.headers.get("content-type") || "";

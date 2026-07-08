@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from db import db
-from ollama_client import ollama_client
+from ollama_client import ollama_client, normalize_model_name
 from state import app_state, State
 from agent import conversation as chat_store
 from tagging import run_tagging_pass, count_pending, count_tagged
@@ -62,7 +62,11 @@ async def _finalize_wake() -> None:
                 local = set(await ollama_client.list_local())
             except Exception:
                 local = set()
-            if default_model not in local:
+            # Compare in normalized form — ``list_local()`` returns
+            # ``family:latest`` for tagless entries and the user's saved
+            # default may drop the tag. Without this, wake would incorrectly
+            # report "default not pulled" for a model that is on disk.
+            if normalize_model_name(default_model) not in local:
                 app_state.last_error = (
                     f"default model '{default_model}' is not pulled yet — "
                     f"open the model panel to pull it."
