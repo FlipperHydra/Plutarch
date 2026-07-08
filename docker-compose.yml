@@ -9,6 +9,13 @@ services:
       PLUTARCH_DATA_DIR: /app/data
       # Point at the host's Ollama daemon. On Linux without Docker Desktop,
       # either uncomment `network_mode: host` below or add an --add-host entry.
+      #
+      # IMPORTANT: this line only tells the container WHERE to look. The
+      # Ollama daemon on your host must also be bound to 0.0.0.0 (not the
+      # default 127.0.0.1) so it accepts the connection. Symptom of a
+      # binding mismatch: the app reports "Ollama reports no models on
+      # disk" while `ollama list` in your terminal shows them.
+      # See README > "Making Ollama reachable from the container".
       OLLAMA_HOST: http://host.docker.internal:11434
       PLUTARCH_NUM_CTX: "16384"
       PLUTARCH_COMPACT_THRESHOLD: "2000"

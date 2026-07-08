@@ -147,6 +147,71 @@ the `network_mode: host` line in `docker-compose.yml` and remove the
 `extra_hosts` block. That gives the container direct access to
 `localhost:11434`.
 
+### Making Ollama reachable from the container
+
+By default the Ollama daemon on Windows and macOS binds to
+`127.0.0.1:11434`, which is **not** reachable from a Docker container
+even via `host.docker.internal`. The container will reach the host
+network interface but Ollama itself won't answer on it. Symptom: the
+app reports "Ollama reports no models on disk" even though
+`ollama list` in your terminal shows models.
+
+Bind Ollama to all interfaces so the container can reach it.
+
+**Windows (PowerShell, as your user):**
+
+```powershell
+setx OLLAMA_HOST "0.0.0.0:11434"
+```
+
+Then quit Ollama from the tray icon and relaunch it. Verify from
+your terminal:
+
+```powershell
+curl http://localhost:11434/api/tags
+```
+
+You should see the JSON list of your pulled models. The container
+will now see the same list.
+
+**macOS (Ollama.app):**
+
+```bash
+launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
+```
+
+Quit and relaunch Ollama.app.
+
+**Linux (systemd):**
+
+```bash
+sudo systemctl edit ollama.service
+```
+
+Add:
+
+```ini
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+```
+
+Then `sudo systemctl daemon-reload && sudo systemctl restart ollama`.
+
+### Verifying which daemon Plutarch is talking to
+
+If the app disagrees with your terminal about what's pulled, hit:
+
+```
+http://localhost:8000/models/diagnostic
+```
+
+from your browser. It returns the raw response the backend sees from
+`ollama.list()`, the URL it's querying, and the ollama-python client
+version — which is enough to tell whether the container is looking at
+the wrong daemon, the daemon is refusing the connection, or the client
+schema is drifting. The 409 alert in the UI also now shows the queried
+host inline.
+
 ### Persistent data
 
 The compose file mounts a named Docker volume at `/app/data` inside the
