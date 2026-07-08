@@ -64,6 +64,11 @@ class _ThinkStripper:
       * The final assistant transcript stored in the conversation history
         excludes the think blocks — the model must not re-read its own
         prior reasoning on the next turn.
+      * When inside a <think> block, content is HELD in _pending until the
+        closing tag arrives. This lets flush() recover the pending text as
+        visible output on an unclosed block (see docstring on flush()), so
+        a model that opens <think> but never closes it still produces a
+        visible answer instead of an empty bubble.
     """
 
     OPEN = "<think>"
@@ -71,11 +76,13 @@ class _ThinkStripper:
 
     def __init__(self) -> None:
         self._in_think = False
-        # Buffer holds the tail of the visible-mode stream that MIGHT still
-        # be the start of "<think>" (or, when inside a think block, might
-        # be the start of "</think>"). We only emit chars once we're sure
-        # they're not part of a boundary tag.
+        # Boundary-buffer: last few chars of the current-mode stream that
+        # might still complete an OPEN or CLOSE tag on the next chunk.
         self._buf = ""
+        # Content inside the current <think> block, held until we see
+        # </think> (then emitted as thinking) or until flush recovers it
+        # as visible (unclosed block).
+        self._pending_think = ""
 
     def feed(self, chunk: str) -> tuple[str, str]:
         """Consume a raw token chunk. Returns (visible, thinking)."""
@@ -91,8 +98,6 @@ class _ThinkStripper:
                     self._buf = self._buf[idx + len(self.OPEN):]
                     self._in_think = True
                     continue
-                # No full <think> yet. Emit everything except a possible
-                # trailing partial-match tail so a future chunk can complete it.
                 keep = self._partial_tail(self._buf, self.OPEN)
                 if keep > 0:
                     visible_out.append(self._buf[:-keep])
@@ -104,28 +109,55 @@ class _ThinkStripper:
             else:
                 idx = self._buf.find(self.CLOSE)
                 if idx >= 0:
-                    thinking_out.append(self._buf[:idx])
+                    # Confirmed close — commit pending text as thinking.
+                    self._pending_think += self._buf[:idx]
+                    thinking_out.append(self._pending_think)
+                    self._pending_think = ""
                     self._buf = self._buf[idx + len(self.CLOSE):]
                     self._in_think = False
                     continue
                 keep = self._partial_tail(self._buf, self.CLOSE)
                 if keep > 0:
-                    thinking_out.append(self._buf[:-keep])
+                    self._pending_think += self._buf[:-keep]
                     self._buf = self._buf[-keep:]
                 else:
-                    thinking_out.append(self._buf)
+                    self._pending_think += self._buf
                     self._buf = ""
                 break
 
         return "".join(visible_out), "".join(thinking_out)
 
-    def flush(self) -> tuple[str, str]:
-        """End-of-stream: emit whatever is buffered, closing any open block."""
-        visible = "" if self._in_think else self._buf
-        thinking = self._buf if self._in_think else ""
+    def flush(self) -> tuple[str, str, bool]:
+        """End-of-stream: emit whatever is buffered.
+
+        Returns (visible, thinking, recovered_from_unclosed_think).
+
+        Design decision: if the stream ends inside a <think> block (no
+        closing tag ever arrived), we RECOVER the pending text as visible
+        output rather than hiding it. Rationale: small/base models
+        sometimes open a <think> tag they never close, and treating that
+        content as hidden reasoning silently swallows the entire
+        response, producing an empty chat bubble. Surfacing the text as
+        visible with a flag lets the loop warn the user that the model
+        mis-formatted its response, while still delivering an answer.
+        """
+        pending = self._pending_think + self._buf
+        recovered = False
+        if self._in_think:
+            if pending:
+                visible = pending
+                thinking = ""
+                recovered = True
+            else:
+                visible = ""
+                thinking = ""
+        else:
+            visible = self._buf
+            thinking = ""
         self._buf = ""
+        self._pending_think = ""
         self._in_think = False
-        return visible, thinking
+        return visible, thinking, recovered
 
     @staticmethod
     def _partial_tail(buf: str, needle: str) -> int:
@@ -196,7 +228,9 @@ async def run_turn(
                     yield {"type": "token", "text": visible}
 
         # Flush any buffered tail (unterminated <think> or trailing chars).
-        vtail, ttail = stripper.flush()
+        # If the stripper recovered text from an unclosed <think> block, warn
+        # the client so it can be surfaced instead of confusing the user.
+        vtail, ttail, recovered = stripper.flush()
         if ttail:
             thinking_text += ttail
             yield {"type": "think", "text": ttail}
@@ -204,6 +238,16 @@ async def run_turn(
             assistant_text += vtail
             tp.feed(vtail)
             yield {"type": "token", "text": vtail}
+        if recovered:
+            yield {
+                "type": "warning",
+                "message": (
+                    "Model opened <think> without closing it — recovered the "
+                    "buffered text as the answer. This usually means the model "
+                    "is too small to follow the response format; try a larger "
+                    "variant (gemma3:1b, llama3.2:1b) or turn off Enable thinking."
+                ),
+            }
 
         await tp.finalize()
         tool_events = tp.drain_results()

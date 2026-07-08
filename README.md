@@ -46,23 +46,33 @@ _Coming soon._
 
 - **Python 3.12+** (works on 3.14 too; only `tiktoken` needed the pin bump)
 - **[Ollama](https://ollama.com/download)** running locally on port 11434
-- At least one small model pulled, for example:
+- At least one small model pulled. **Recommended default: `gemma3:1b`**
+  (270m is too small to reliably emit the tool-call XML the agent expects;
+  see the note below):
   ```bash
-  ollama pull gemma3:270m
+  ollama pull gemma3:1b
   ```
 
 Recommended models, all &le; 4B parameters:
 
-| Tag              | Approx VRAM (16k ctx) |
-| ---------------- | --------------------- |
-| `gemma3:270m`    | 0.7 GB                |
-| `qwen2.5:0.5b`   | 1.0 GB                |
-| `llama3.2:1b`    | 1.6 GB                |
-| `gemma3:1b`      | 1.7 GB                |
-| `phi3:mini`      | 4.0 GB                |
-| `gemma3:4b`      | 4.5 GB                |
+| Tag              | Approx VRAM (16k ctx) | Notes                                    |
+| ---------------- | --------------------- | ---------------------------------------- |
+| `gemma3:270m`    | 0.7 GB                | Fits anywhere but often fails tool XML   |
+| `qwen2.5:0.5b`   | 1.0 GB                | Marginal on tool-following               |
+| `llama3.2:1b`    | 1.6 GB                | ✅ Reliable minimum                      |
+| `gemma3:1b`      | 1.7 GB                | ✅ Recommended default                   |
+| `phi3:mini`      | 4.0 GB                | Best small tool-follower                 |
+| `gemma3:4b`      | 4.5 GB                | Best quality in the &le;4B range         |
 
 Any other Ollama model works too — add it from the manual entry dialog.
+
+> **On tiny models (< 1B).** Plutarch's agent asks the model to emit tool
+> calls as XML blocks and, optionally, reasoning inside `<think>...</think>`
+> tags. Models under ~1B parameters frequently mis-format either or both.
+> Plutarch handles the common failures gracefully: unclosed `<think>`
+> blocks are recovered as visible answers with a warning banner, and
+> stray tags are stripped. But the answers themselves will be lower
+> quality. Pick 1B+ for anything beyond "does this run at all?" testing.
 
 ---
 
