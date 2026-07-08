@@ -16,11 +16,17 @@ window.models_mod = (() => {
     pillName().textContent = text;
   }
 
+  // Cache of {name -> pulled:bool} from the last refresh so loadSelected can
+  // decide whether to pull first without re-hitting the API.
+  const pulledMap = new Map();
+
   async function refresh() {
     const data = await api.availableModels();
     const s = sel();
     s.innerHTML = "";
+    pulledMap.clear();
     for (const m of data.models) {
+      pulledMap.set(m.name, !!m.pulled);
       const opt = document.createElement("option");
       opt.value = m.name;
       const marks = [];
@@ -68,15 +74,24 @@ window.models_mod = (() => {
         `This model needs ~${est.estimate_gb} GB (close to available ~${est.available_gb} GB). Continue?`)) return;
     }
 
-    setPill("blue", "loading " + name);
-    showProgress("Loading " + name + "...");
     try {
+      // If not pulled locally, stream the pull first with progress.
+      if (!pulledMap.get(name)) {
+        setPill("blue", "pulling " + name);
+        showProgress(`Pulling ${name}... (this can take a while on first run)`);
+        await pullWithProgress(name);
+      }
+
+      setPill("blue", "loading " + name);
+      showProgress("Loading " + name + " into memory...");
       await api.selectModel(name);
       setPill("green", name);
       setTimeout(() => setPill("grey", name), 3000);
     } catch (e) {
-      setPill("red", "load failed");
-      alert("Load failed: " + e.message);
+      setPill("red", "failed");
+      alert("Model setup failed: " + e.message +
+            "\n\nCheck that Ollama is running (ollama serve) and reachable at " +
+            "http://127.0.0.1:11434.");
       setTimeout(() => refresh(), 3000);
     } finally {
       hideProgress();
@@ -86,6 +101,30 @@ window.models_mod = (() => {
       try { await api.setDefault(name); } catch (_) {}
     }
     await refresh();
+  }
+
+  // Streams the pull and resolves when Ollama reports the final "success"
+  // status. Rejects if any event carries an error field.
+  function pullWithProgress(name) {
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let handle = null;
+      const finish = (fn, arg) => { if (done) return; done = true; try { handle && handle.close(); } catch (_) {} fn(arg); };
+
+      api.pullModel(name, (ev) => {
+        if (ev.error) return finish(reject, new Error(ev.error));
+        // Progress: `status` is a human string, `total`/`completed` are bytes.
+        if (ev.total && ev.completed != null) {
+          const pct = Math.min(100, Math.floor((ev.completed / ev.total) * 100));
+          popupLabel().textContent =
+            `Pulling ${name}... ${ev.status || "downloading"} ${pct}%`;
+        } else if (ev.status) {
+          popupLabel().textContent = `Pulling ${name}... ${ev.status}`;
+          // Final Ollama event is `status: "success"`.
+          if (/^success$/i.test(ev.status)) return finish(resolve);
+        }
+      }).then((h) => { handle = h; }).catch(reject);
+    });
   }
 
   function showProgress(text) {

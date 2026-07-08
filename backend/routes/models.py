@@ -70,6 +70,15 @@ async def pull(body: NameBody):
 async def select(body: NameBody):
     if not _MODEL_NAME_RE.match(body.name):
         raise HTTPException(400, "invalid model name")
+    # Guard: require the model to be pulled locally before load. Loading a
+    # missing model surfaces as an obscure httpx "All connection attempts
+    # failed" error from the Ollama client. Pull first via /models/pull.
+    local = set(await ollama_client.list_local())
+    if body.name not in local:
+        raise HTTPException(
+            409,
+            f"model '{body.name}' is not pulled. Pull it first via /models/pull.",
+        )
     # Enforce one-model-at-a-time by evicting the outgoing model first.
     if app_state.loaded_model and app_state.loaded_model != body.name:
         await ollama_client.unload(app_state.loaded_model)

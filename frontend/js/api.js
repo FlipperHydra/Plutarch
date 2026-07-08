@@ -17,7 +17,7 @@ window.api = (() => {
     return ct.includes("application/json") ? r.json() : r.text();
   }
 
-  return {
+  const obj = {
     status:    ()          => req("/status"),
     wake:      ()          => req("/wake",  { method: "POST", body: "{}" }),
     sleep:     (body = {}) => req("/sleep", { method: "POST", body: JSON.stringify(body) }),
@@ -30,6 +30,8 @@ window.api = (() => {
 
     availableModels:  ()               => req("/models/available"),
     selectModel:      (name)           => req("/models/select", { method: "POST", body: JSON.stringify({ name }) }),
+    // Streams Ollama pull progress. onEvent receives { status, total, completed, ... } or { error }.
+    pullModel:        (name, onEvent)  => obj.sse("/models/pull", { name }, onEvent),
     setDefault:       (name)           => req("/models/default",{ method: "POST", body: JSON.stringify({ name }) }),
     manualAddModel:   (name)           => req("/models/manual-add", { method: "POST", body: JSON.stringify({ name }) }),
     vramEstimate:     (name, ctx)      => req(`/models/vram?model=${encodeURIComponent(name)}${ctx?`&ctx=${ctx}`:""}`),
@@ -74,4 +76,5 @@ window.api = (() => {
       return { close: () => controller.abort() };
     },
   };
+  return obj;
 })();
