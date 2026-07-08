@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Plutarch</title>
+  <link rel="stylesheet" href="/css/theme.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/editor.css" />
+  <link rel="stylesheet" href="/css/modals.css" />
+</head>
+<body class="app">
+  <!-- Top bar -->
+  <header class="topbar">
+    <button id="toggle-history"  class="ghost" title="Notes history">☰</button>
+    <h1 class="title">Plutarch</h1>
+    <div class="topbar-right">
+      <button id="new-note"    class="ghost">+ New note</button>
+      <button id="save-note"   class="ghost">Save</button>
+      <button id="export-pdf"  class="ghost">Export PDF</button>
+      <button id="sleep-btn"   class="danger">Sleep</button>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <div class="workspace">
+    <aside id="history-sidebar" class="sidebar left">
+      <div class="sidebar-head">Notes</div>
+      <div id="history-list" class="list"></div>
+    </aside>
+
+    <section class="editor-column">
+      <input id="note-title" class="note-title" placeholder="Untitled" />
+      <div id="editor" class="editor"></div>
+    </section>
+
+    <aside id="chat-sidebar" class="sidebar right">
+      <div class="sidebar-head">
+        <span>Chat</span>
+        <label class="toggle-line">
+          <input type="checkbox" id="tool-disclosure" />
+          <span>Show tool calls</span>
+        </label>
+      </div>
+      <div id="chat-log" class="chat-log"></div>
+      <div class="chat-input">
+        <textarea id="chat-input" rows="2" placeholder="Ask about a past note..."></textarea>
+        <button id="chat-send" class="primary">Send</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Model status pill (bottom-left) -->
+  <div id="model-pill" class="model-pill grey" title="Model status">
+    <span id="model-pill-name">no model</span>
+  </div>
+
+  <!-- Model picker sidebar (right of pill, collapsible) -->
+  <aside id="model-panel" class="model-panel hidden">
+    <div class="panel-head">
+      <span>Model</span>
+      <button id="close-model-panel" class="ghost">×</button>
+    </div>
+    <div class="panel-body">
+      <select id="model-select"></select>
+      <button id="model-manual" class="ghost">+ Add manual model</button>
+      <label class="toggle-line">
+        <input type="checkbox" id="model-is-default" />
+        <span>Use as default (autoload on startup)</span>
+      </label>
+      <button id="model-load-btn" class="primary">Load selected model</button>
+      <div id="model-vram" class="vram-line"></div>
+    </div>
+  </aside>
+
+  <!-- Progress popup (hidden by default) -->
+  <div id="progress-popup" class="progress-popup hidden">
+    <span id="progress-label">Model loading...</span>
+    <button id="progress-hide" class="ghost">Hide</button>
+  </div>
+
+  <!-- Manual add dialog -->
+  <div id="manual-dialog" class="modal hidden">
+    <div class="modal-inner">
+      <h3>Add an Ollama model</h3>
+      <p class="muted">Type any tag from the Ollama library, e.g. <code>llama3.2:3b</code>.</p>
+      <input id="manual-input" placeholder="model-name:tag" />
+      <p id="manual-err" class="err hidden"></p>
+      <div class="row">
+        <button id="manual-cancel" class="ghost">Cancel</button>
+        <button id="manual-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sleep no-default dialog -->
+  <div id="sleep-choice" class="modal hidden">
+    <div class="modal-inner">
+      <h3>No default model set</h3>
+      <p>Tagging your notes needs a small model. Choose one option:</p>
+      <div class="col">
+        <button id="sleep-use-current"  class="primary">Use current model this one time</button>
+        <button id="sleep-set-default"  class="primary">Set current model as default</button>
+        <button id="sleep-skip"         class="ghost">Skip tagging for now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sleep toast (indeterminate) -->
+  <div id="sleep-toast" class="toast hidden">
+    <div class="spinner"></div>
+    <span>Tagging in progress...</span>
+    <button id="sleep-force" class="ghost">Force stop</button>
+  </div>
+
+  <script src="/vendor/tiptap-bundle.umd.js"></script>
+  <script src="/vendor/html2pdf.bundle.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/lifecycle.js"></script>
+  <script src="/js/editor.js"></script>
+  <script src="/js/history.js"></script>
+  <script src="/js/models.js"></script>
+  <script src="/js/chat.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>

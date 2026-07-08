@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Plutarch</title>
+  <link rel="stylesheet" href="/css/theme.css" />
+  <link rel="stylesheet" href="/css/modals.css" />
+</head>
+<body class="welcome">
+  <main class="welcome-card">
+    <h1>Hello! Welcome to Plutarch!</h1>
+    <p class="subtitle">A local, private note taking app with an AI assistant that helps you find what you wrote.</p>
+
+    <button id="start-btn" class="primary big">Start app</button>
+
+    <div id="wake-loader" class="loader hidden">
+      <div class="spinner"></div>
+      <span class="loader-label">Waking...</span>
+    </div>
+
+    <a id="enter-btn" href="/app" class="primary big hidden">
+      <span>Enter</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 12h12M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
+
+    <p id="welcome-error" class="err hidden"></p>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/lifecycle.js"></script>
+  <script>
+    (async () => {
+      const startBtn  = document.getElementById('start-btn');
+      const loader    = document.getElementById('wake-loader');
+      const enterBtn  = document.getElementById('enter-btn');
+      const errBox    = document.getElementById('welcome-error');
+
+      // If we're already active, skip straight to enter.
+      try {
+        const s = await api.status();
+        if (s.state === 'active') {
+          startBtn.classList.add('hidden');
+          enterBtn.classList.remove('hidden');
+        }
+      } catch (_) {}
+
+      startBtn.addEventListener('click', async () => {
+        startBtn.classList.add('hidden');
+        loader.classList.remove('hidden');
+        errBox.classList.add('hidden');
+        try {
+          await lifecycle.wake();
+          loader.classList.add('hidden');
+          enterBtn.classList.remove('hidden');
+        } catch (e) {
+          loader.classList.add('hidden');
+          startBtn.classList.remove('hidden');
+          errBox.textContent = 'Could not start the app: ' + e.message;
+          errBox.classList.remove('hidden');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+services:
+  plutarch:
+    build: .
+    image: plutarch:latest
+    container_name: plutarch
+    ports:
+      - "8000:8000"
+    environment:
+      PLUTARCH_DATA_DIR: /app/data
+      # Point at the host's Ollama daemon. On Linux without Docker Desktop,
+      # either uncomment `network_mode: host` below or add an --add-host entry.
+      OLLAMA_HOST: http://host.docker.internal:11434
+      PLUTARCH_NUM_CTX: "16384"
+      PLUTARCH_COMPACT_THRESHOLD: "2000"
+    volumes:
+      - plutarch_data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # network_mode: host   # <- uncomment for Linux with host Ollama
+    restart: unless-stopped
+
+volumes:
+  plutarch_data:
