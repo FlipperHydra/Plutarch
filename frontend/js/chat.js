@@ -4,6 +4,7 @@ window.chat_mod = (() => {
   const input   = () => document.getElementById("chat-input");
   const sendBtn = () => document.getElementById("chat-send");
   const discl   = () => document.getElementById("tool-disclosure");
+  const thinkCB = () => document.getElementById("thinking-toggle");
 
   let onOpenNote = () => {};
 
@@ -59,7 +60,9 @@ window.chat_mod = (() => {
       await api.sse("/chat/stream", { message: text }, ev => {
         if (ev.type === "token")     asstMsg.textContent += ev.text;
         else if (ev.type === "think") {
-          if (showDisclosure()) {
+          // Only render thinking chunks when the user has thinking enabled.
+          // (Tool calls have their own toggle.)
+          if (thinkCB().checked) {
             const t = makeMsg("think");
             t.textContent = "[think] " + ev.text;
           }
@@ -73,6 +76,16 @@ window.chat_mod = (() => {
           }
         }
         else if (ev.type === "top3")  topCards.push(ev.card);
+        else if (ev.type === "warning") {
+          const w = makeMsg("warn");
+          w.textContent = "⚠ " + ev.message;
+          // If the backend told us thinking is unsupported, reflect it in the UI
+          // so the user's toggle state matches reality.
+          if (/thinking/i.test(ev.message) && thinkCB().checked) {
+            thinkCB().checked = false;
+            persistThinking(false);
+          }
+        }
         else if (ev.type === "error") { asstMsg.textContent += `\n[error] ${ev.message}`; }
         else if (ev.type === "done")  { renderTop3(topCards); }
         log().scrollTop = log().scrollHeight;
@@ -84,12 +97,34 @@ window.chat_mod = (() => {
     }
   }
 
+  async function persistThinking(on) {
+    try {
+      await fetch("/settings/thinking_enabled", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: on ? "on" : "off" }),
+      });
+    } catch (_) { /* non-fatal */ }
+  }
+
+  async function loadThinkingState() {
+    try {
+      const r = await fetch("/settings/thinking_enabled");
+      if (r.ok) {
+        const j = await r.json();
+        thinkCB().checked = j.value === "on";
+      }
+    } catch (_) { /* 404 = not set, default off */ }
+  }
+
   function wire() {
     sendBtn().addEventListener("click", send);
     input().addEventListener("keydown", e => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
     });
+    thinkCB().addEventListener("change", () => persistThinking(thinkCB().checked));
+    loadThinkingState();
   }
 
-  return { wire, setOpenNoteHandler };
+  return { wire, setOpenNoteHandler, loadThinkingState };
 })();

@@ -203,7 +203,14 @@ Override any of these under `environment:` in `docker-compose.yml`:
    prunes to at most 10 candidates, calls `score_candidate` on each, and
    surfaces the top 3 with reasons and open-note buttons. Turn on
    **Show tool calls** to see the underlying XML tool blocks, the tool
-   results, the model's thinking, and the numeric scores.
+   results, and the numeric scores.
+
+   The chat sidebar also has a **Show thinking** toggle (off by default).
+   Only a small subset of models implement Ollama's thinking API
+   (Qwen3, DeepSeek-R1, and similar); enabling it against models that
+   don't will throw an error. If Plutarch detects that error it falls
+   back automatically, posts a warning, and turns the toggle off.
+   Tagging and compaction never use thinking, regardless of the toggle.
 6. Press **Sleep** when you're done. If a default model is set, tagging
    runs in the background before the model unloads. If not, Plutarch
    asks you: use the current model this one time, set it as default, or

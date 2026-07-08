@@ -79,16 +79,28 @@ class OllamaClient:
             pass
 
     # --- Chat streaming ---------------------------------------------------
-    async def chat_stream(self, model: str, messages: list, num_ctx: int):
-        return await self._client.chat(
-            model=model,
-            messages=messages,
-            think=True,
-            stream=True,
-            options={"num_ctx": num_ctx},
-        )
+    async def chat_stream(
+        self, model: str, messages: list, num_ctx: int, think: bool = False
+    ):
+        """Start a streaming chat. `think=True` enables the Ollama thinking
+        API and is only supported by a small subset of models (e.g. Qwen3,
+        DeepSeek-R1). Passing it to unsupported models raises an httpx error.
+        Callers should catch and retry with think=False on failure."""
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "options": {"num_ctx": num_ctx},
+        }
+        if think:
+            kwargs["think"] = True
+        return await self._client.chat(**kwargs)
 
     async def chat_once(self, model: str, messages: list, num_ctx: int) -> str:
+        """One-shot chat used for tagging, compaction, and other background
+        jobs. Thinking is deliberately NEVER enabled here — small models used
+        for these jobs don't support it, and thinking output would pollute
+        structured tagging responses even when supported."""
         resp = await self._client.chat(
             model=model,
             messages=messages,

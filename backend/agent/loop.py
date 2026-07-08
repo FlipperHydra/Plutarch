@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import AsyncIterator
 
 from config import NUM_CTX
+from db import db
 from ollama_client import ollama_client
 from .compaction import maybe_compact
 from .prompts import SYSTEM_PROMPT, REDUCE_PROMPT, TOP3_PROMPT, tool_prompt
@@ -48,6 +49,12 @@ async def run_turn(
 
     system_messages = build_system_messages(registry)
 
+    # User-controlled toggle. Off by default because most small models
+    # (gemma3, llama3.2, phi3, qwen2.5) do not implement the thinking API
+    # and error out when it is requested.
+    think_setting = (await db.get_setting("thinking_enabled")) or "off"
+    want_think = think_setting == "on"
+
     for _round in range(MAX_TOOL_ROUNDS):
         tp = ToolProcessor(registry)
         assistant_text = ""
@@ -55,10 +62,33 @@ async def run_turn(
 
         messages = list(system_messages) + conversation
         try:
-            response = await ollama_client.chat_stream(model, messages, NUM_CTX)
+            response = await ollama_client.chat_stream(
+                model, messages, NUM_CTX, think=want_think
+            )
         except Exception as e:
-            yield {"type": "error", "message": f"chat failed: {e}"}
-            return
+            # If the failure looks like a thinking-unsupported error, retry
+            # once without it and warn the user so they can turn the toggle
+            # off permanently.
+            msg = str(e).lower()
+            if want_think and ("think" in msg or "thinking" in msg):
+                yield {
+                    "type": "warning",
+                    "message": (
+                        f"Model '{model}' does not support the thinking API. "
+                        f"Retrying without it — turn off 'Show thinking' to skip this next time."
+                    ),
+                }
+                want_think = False
+                try:
+                    response = await ollama_client.chat_stream(
+                        model, messages, NUM_CTX, think=False
+                    )
+                except Exception as e2:
+                    yield {"type": "error", "message": f"chat failed: {e2}"}
+                    return
+            else:
+                yield {"type": "error", "message": f"chat failed: {e}"}
+                return
 
         async for chunk in response:
             msg = getattr(chunk, "message", None)
