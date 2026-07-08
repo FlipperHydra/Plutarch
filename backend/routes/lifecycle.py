@@ -15,7 +15,7 @@ from db import db
 from ollama_client import ollama_client
 from state import app_state, State
 from agent import conversation as chat_store
-from tagging import run_tagging_pass, count_pending
+from tagging import run_tagging_pass, count_pending, count_tagged
 
 
 router = APIRouter()
@@ -68,10 +68,29 @@ async def wake():
 
 
 async def _finalize_sleep(model_for_tagging: str) -> None:
-    """Run tagging with the chosen model, then unload and go cold."""
+    """Run tagging with the chosen model, then unload and go cold.
+
+    Notes with tagging_status='done' (already tagged, either by a prior
+    Sleep or by the manual Tag button) are skipped by run_tagging_pass'
+    SQL filter. We log the counts on app_state.last_error so the UI can
+    surface an audit line like 'Tagged 2 new notes; 5 already tagged'.
+    """
     if model_for_tagging:
         try:
-            await run_tagging_pass(model_for_tagging)
+            already_tagged = await count_tagged()
+            result = await run_tagging_pass(
+                model_for_tagging, tagged_by="sleep"
+            )
+            summary = (
+                f"Sleep tagged {result['processed']} note(s); "
+                f"skipped {already_tagged} already-tagged; "
+                f"{result['failed']} failed."
+            )
+            print(f"[sleep] {summary}")
+            # Record on state so /status callers can surface it.
+            app_state.last_error = "" if result["failed"] == 0 else (
+                f"tagging finished with {result['failed']} failure(s)"
+            )
         except Exception as e:
             app_state.last_error = f"tagging failed: {e}"
 

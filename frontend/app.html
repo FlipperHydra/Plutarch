@@ -18,6 +18,7 @@
       <button id="new-note"    class="ghost">+ New note</button>
       <button id="save-note"   class="ghost">Save</button>
       <button id="export-pdf"  class="ghost">Export PDF</button>
+      <button id="tag-btn"     class="ghost" title="Tag pending notes now (skipped notes are already tagged)">Tag</button>
       <button id="sleep-btn"   class="danger">Sleep</button>
     </div>
   </header>
@@ -41,9 +42,9 @@
           <input type="checkbox" id="tool-disclosure" />
           <span>Show tool calls</span>
         </label>
-        <label class="toggle-line" title="Most small models don't support the thinking API. Leave off unless your model does (e.g. qwen3, deepseek-r1).">
-          <input type="checkbox" id="thinking-toggle" />
-          <span>Show thinking</span>
+        <label class="toggle-line" title="Ask the model to reason step by step before answering. The reasoning is shown alongside tool calls when 'Show tool calls' is on.">
+          <input type="checkbox" id="steps-toggle" />
+          <span>Show steps</span>
         </label>
       </div>
       <div id="chat-log" class="chat-log"></div>
@@ -72,6 +73,7 @@
         <input type="checkbox" id="model-is-default" />
         <span>Use as default (autoload on startup)</span>
       </label>
+      <button id="model-pull-btn" class="ghost">Pull model</button>
       <button id="model-load-btn" class="primary">Load selected model</button>
       <div id="model-vram" class="vram-line"></div>
     </div>

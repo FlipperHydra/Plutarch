@@ -69,6 +69,7 @@
     modelPanel.classList.add("hidden"));
   document.getElementById("model-select").addEventListener("change", () => models_mod.updateVram());
   document.getElementById("model-load-btn").addEventListener("click", () => models_mod.loadSelected());
+  document.getElementById("model-pull-btn").addEventListener("click", () => models_mod.pullSelected());
 
   // Manual add
   const manualDlg = document.getElementById("manual-dialog");
@@ -90,6 +91,48 @@
   document.getElementById("progress-hide").addEventListener("click", () => models_mod.hideProgress());
 
   await models_mod.refresh();
+
+  // Tag button: on-demand tagging pass mid-session. Streams progress into
+  // the model-progress popup. Skips notes already tagged (tagging_status =
+  // 'done'), so Sleep afterward doesn't re-tag anything.
+  document.getElementById("tag-btn").addEventListener("click", async () => {
+    await saveActive();  // flush the current note so it's eligible
+    const btn = document.getElementById("tag-btn");
+    btn.disabled = true;
+    models_mod.showProgress("Tagging pending notes...");
+    try {
+      let handle = null;
+      await new Promise((resolve, reject) => {
+        api.sse("/tags/run", {}, (ev) => {
+          if (ev.type === "start") {
+            if (ev.total === 0) {
+              models_mod.showProgress("No notes to tag \u2014 everything is already tagged.");
+            } else {
+              models_mod.showProgress(`Tagging 0/${ev.total} notes...`);
+            }
+          } else if (ev.type === "progress") {
+            models_mod.showProgress(`Tagging ${ev.processed}/${ev.total} notes...`);
+          } else if (ev.type === "done") {
+            const failedNote = ev.failed ? ` (${ev.failed} failed)` : "";
+            models_mod.showProgress(
+              `Tagged ${ev.processed} of ${ev.total} note(s)${failedNote}. Sleep will skip these.`
+            );
+            resolve();
+          } else if (ev.type === "error") {
+            reject(new Error(ev.message));
+          }
+        }).then((h) => { handle = h; }).catch(reject);
+      });
+      // Keep the summary visible for a couple seconds then dismiss.
+      setTimeout(() => models_mod.hideProgress(), 2500);
+      await history_mod.refresh(activeNoteId);
+    } catch (e) {
+      models_mod.hideProgress();
+      alert("Tagging failed: " + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // Sleep flow
   const sleepChoice = document.getElementById("sleep-choice");

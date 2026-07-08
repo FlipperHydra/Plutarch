@@ -101,3 +101,18 @@ COMPACTION_PROMPT = (
     "user goals, decisions made, note ids referenced, tools called and their "
     "outcomes, and any open threads. Do not editorialize."
 )
+
+
+# Chain-of-thought instruction injected when the "Show steps" toggle is on.
+# Works on any model (does not depend on Ollama's native thinking API).
+# The loop strips these blocks from the final answer and, when the user has
+# tool disclosure enabled, streams them as `think` events so the UI can show
+# them alongside tool calls.
+COT_PROMPT = (
+    "Before your final answer, think step by step. Wrap your reasoning in "
+    "<think>...</think> tags. Put the reasoning first, then the answer for "
+    "the user AFTER the closing </think> tag. Keep the reasoning focused: "
+    "which tool to call next, what the returned data means, and how the "
+    "candidates should be ranked. Do not restate the reasoning in the "
+    "answer."
+)

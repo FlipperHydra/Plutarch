@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS notes (
   created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
   modified_at    TEXT    NOT NULL DEFAULT (datetime('now')),
   tagging_status TEXT    NOT NULL DEFAULT 'pending'
-                 CHECK (tagging_status IN ('pending','in_progress','done'))
+                 CHECK (tagging_status IN ('pending','in_progress','done')),
+  -- Records which pass produced the current tags/description.
+  -- NULL = never tagged. Values: 'manual' (Tag button), 'sleep' (auto).
+  tagged_by      TEXT,
+  tagged_at      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_notes_modified ON notes(modified_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notes_tagging  ON notes(tagging_status);
@@ -103,6 +107,11 @@ CREATE TABLE IF NOT EXISTS custom_models (
 DEFAULT_SETTINGS: dict[str, str] = {
     "default_model": "",
     "tool_disclosure_enabled": "false",
+    # Off by default. When "on", the agent injects a chain-of-thought
+    # instruction so the model produces <think>...</think> reasoning before
+    # its answer. Works on any model. Rendering is gated separately on the
+    # tool-disclosure toggle.
+    "show_steps_enabled": "off",
     "editor_font": "Times New Roman",
     "editor_size": "12",
 }
@@ -120,6 +129,7 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(SCHEMA)
+        await self._migrate()
         await self._seed()
         await self._conn.commit()
 
@@ -133,6 +143,18 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database is closed. Call /wake first.")
         return self._conn
+
+    async def _migrate(self) -> None:
+        """Additive schema migrations for tables that predate this version.
+        Runs after CREATE TABLE IF NOT EXISTS — so it patches old databases
+        without touching fresh installs."""
+        assert self._conn is not None
+        async with self._conn.execute("PRAGMA table_info(notes)") as cur:
+            cols = {row["name"] for row in await cur.fetchall()}
+        if "tagged_by" not in cols:
+            await self._conn.execute("ALTER TABLE notes ADD COLUMN tagged_by TEXT")
+        if "tagged_at" not in cols:
+            await self._conn.execute("ALTER TABLE notes ADD COLUMN tagged_at TEXT")
 
     async def _seed(self) -> None:
         assert self._conn is not None

@@ -133,6 +133,32 @@ window.models_mod = (() => {
   }
   function hideProgress() { popup().classList.add("hidden"); }
 
+  // Pull-only flow: fetch the model to disk without loading it into memory.
+  // Used by the standalone "Pull model" button. Shares the progress popup
+  // with loadSelected() so the UI is consistent.
+  async function pullSelected() {
+    const name = sel().value;
+    if (!name) return;
+    if (pulledMap.get(name)) {
+      alert("'" + name + "' is already pulled.");
+      return;
+    }
+    setPill("blue", "pulling " + name);
+    showProgress(`Pulling ${name}... (this can take a while on first run)`);
+    try {
+      await pullWithProgress(name);
+      setPill("grey", "pulled");
+    } catch (e) {
+      setPill("red", "pull failed");
+      alert("Pull failed: " + e.message +
+            "\n\nCheck that Ollama is running (ollama serve) and reachable at " +
+            "http://127.0.0.1:11434.");
+    } finally {
+      hideProgress();
+      await refresh();
+    }
+  }
+
   async function manualSave(name) {
     if (!/^[A-Za-z0-9._:/\-]{1,100}$/.test(name)) {
       throw new Error("Invalid characters or too long. Use letters, digits, . : / _ -");
@@ -141,5 +167,5 @@ window.models_mod = (() => {
     await refresh();
   }
 
-  return { refresh, updateVram, loadSelected, manualSave, setPill, showProgress, hideProgress };
+  return { refresh, updateVram, loadSelected, pullSelected, manualSave, setPill, showProgress, hideProgress };
 })();

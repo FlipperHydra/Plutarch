@@ -139,7 +139,7 @@ async def _pending_note_ids() -> list[int]:
     return [r["id"] for r in rows]
 
 
-async def _process_note(model: str, note_id: int) -> None:
+async def _process_note(model: str, note_id: int, tagged_by: str) -> None:
     async with db.conn.execute(
         "SELECT title, body_text FROM notes WHERE id = ?", (note_id,)
     ) as cur:
@@ -183,32 +183,69 @@ async def _process_note(model: str, note_id: int) -> None:
     sentences = re.split(r"(?<=[.!?])\s+", desc.strip())
     desc_out = " ".join(sentences[:3]).strip()
 
+    # tagged_by / tagged_at record who did this pass (manual vs sleep) so
+    # Sleep can skip already-tagged notes and a future UI can offer retag.
+    # modified_at is deliberately re-set to its own value: we don't want a
+    # description update to bump the note to the top of the sidebar.
     await db.conn.execute(
         "UPDATE notes SET description = ?, tagging_status = 'done', "
+        "tagged_by = ?, tagged_at = datetime('now'), "
         "modified_at = modified_at WHERE id = ?",
-        (desc_out, note_id),
+        (desc_out, tagged_by, note_id),
     )
     await db.conn.commit()
 
 
-async def run_tagging_pass(model: str, on_progress=None) -> int:
-    """Tag every pending note. Returns count processed."""
+async def run_tagging_pass(
+    model: str,
+    tagged_by: str = "sleep",
+    on_progress=None,
+) -> dict:
+    """Tag every note whose tagging_status is 'pending' or 'in_progress'.
+
+    Notes already marked 'done' are skipped by the SQL filter in
+    _pending_note_ids — which is exactly what makes the manual Tag button
+    idempotent with Sleep: a note tagged mid-session is 'done' and Sleep
+    will silently skip it.
+
+    Args:
+      model: Ollama model name to use for the tagging + description passes.
+      tagged_by: 'manual' (Tag button) or 'sleep' (auto). Recorded per note.
+      on_progress: optional async callback (done:int, total:int).
+
+    Returns:
+      {'processed': int, 'failed': int, 'total': int}
+    """
     ids = await _pending_note_ids()
+    total = len(ids)
     processed = 0
+    failed = 0
     for nid in ids:
         try:
-            await _process_note(model, nid)
+            await _process_note(model, nid, tagged_by=tagged_by)
         except Exception as e:
             print(f"[tagging] note {nid} failed: {e}")
+            failed += 1
             # Leave it as in_progress so wake-time resume picks it up.
             continue
         processed += 1
         if on_progress:
             try:
-                await on_progress(processed, len(ids))
+                await on_progress(processed, total)
             except Exception:
                 pass
-    return processed
+    return {"processed": processed, "failed": failed, "total": total}
+
+
+async def count_tagged() -> int:
+    """Count notes with tagging_status = 'done'. Used by Sleep to report how
+    many notes it deliberately skipped (already tagged, likely via the
+    manual Tag button)."""
+    async with db.conn.execute(
+        "SELECT COUNT(*) AS c FROM notes WHERE tagging_status = 'done'"
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row["c"]) if row else 0
 
 
 async def count_pending() -> int:

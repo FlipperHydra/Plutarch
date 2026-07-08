@@ -196,25 +196,36 @@ Override any of these under `environment:` in `docker-compose.yml`:
 3. Take notes in the middle column. Left sidebar = notes ordered by
    modified time (Today / Yesterday / This week / Older). Right sidebar
    = your chat with the assistant.
-4. Pick a model from the bottom-left model pill. On first launch nothing
-   loads automatically — check *Use as default* next to a model to
-   enable autoload on future starts.
+4. Pick a model from the bottom-left model pill. Use **Pull model** to
+   download a model without loading it into memory, or **Load selected
+   model** to pull (if needed) and load in one step. Check *Use as
+   default* to autoload the model on future starts.
 5. Ask the assistant a retrieval question. It calls `query_notes` first,
    prunes to at most 10 candidates, calls `score_candidate` on each, and
-   surfaces the top 3 with reasons and open-note buttons. Turn on
-   **Show tool calls** to see the underlying XML tool blocks, the tool
-   results, and the numeric scores.
+   surfaces the top 3 with reasons and open-note buttons.
 
-   The chat sidebar also has a **Show thinking** toggle (off by default).
-   Only a small subset of models implement Ollama's thinking API
-   (Qwen3, DeepSeek-R1, and similar); enabling it against models that
-   don't will throw an error. If Plutarch detects that error it falls
-   back automatically, posts a warning, and turns the toggle off.
-   Tagging and compaction never use thinking, regardless of the toggle.
-6. Press **Sleep** when you're done. If a default model is set, tagging
+   The chat sidebar has two toggles:
+
+   - **Show tool calls** — renders tool XML, tool results, and the model's
+     reasoning inline in the chat.
+   - **Show steps** — asks the model to reason step by step (chain of
+     thought) before its answer, wrapping the reasoning in
+     `<think>...</think>` tags. This is a prompt-level instruction, not
+     Ollama's native thinking API, so it works on every model. The
+     reasoning is only rendered when **Show tool calls** is also on.
+     Tagging and compaction never use CoT, regardless of the toggle.
+6. Press **Tag** at any point during a session to run the tagging pass
+   on-demand instead of waiting for Sleep. Progress is shown in the
+   model popup. Notes already tagged (whether by an earlier Tag click
+   or by a prior Sleep) are silently skipped — the invariant is:
+   *once a note is tagged, it is never re-tagged until you explicitly
+   ask*.
+
+7. Press **Sleep** when you're done. If a default model is set, tagging
    runs in the background before the model unloads. If not, Plutarch
    asks you: use the current model this one time, set it as default, or
-   skip tagging and defer until later.
+   skip tagging and defer until later. Notes already marked `done`
+   (from an earlier Tag click) are skipped by Sleep.
 
 ---
 
