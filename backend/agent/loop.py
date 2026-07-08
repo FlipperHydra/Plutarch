@@ -195,7 +195,6 @@ async def run_turn(
         tp = ToolProcessor(registry)
         stripper = _ThinkStripper()
         assistant_text = ""
-        thinking_text = ""
 
         messages = list(system_messages) + conversation
         try:
@@ -211,16 +210,17 @@ async def run_turn(
             if msg is None:
                 continue
             # Some models still surface a native `thinking` field even when
-            # we didn't ask for it; treat it the same as a <think> block.
+            # we didn't ask for it. Treat it the same as a <think> block,
+            # but only surface it to the client when CoT is enabled — with
+            # CoT off we asked the model NOT to reason out loud, so any
+            # native reasoning that leaks through should stay hidden.
             native_think = getattr(msg, "thinking", None)
-            if native_think:
-                thinking_text += native_think
+            if native_think and cot_enabled:
                 yield {"type": "think", "text": native_think}
             content = getattr(msg, "content", None)
             if content:
                 visible, thinking = stripper.feed(content)
                 if thinking:
-                    thinking_text += thinking
                     yield {"type": "think", "text": thinking}
                 if visible:
                     assistant_text += visible
@@ -232,11 +232,15 @@ async def run_turn(
         # the client so it can be surfaced instead of confusing the user.
         vtail, ttail, recovered = stripper.flush()
         if ttail:
-            thinking_text += ttail
             yield {"type": "think", "text": ttail}
         if vtail:
             assistant_text += vtail
-            tp.feed(vtail)
+            # If this text was recovered from an unclosed <think> block it is
+            # reasoning, not answer content — do NOT feed it to the tool
+            # processor (which would try to dispatch phantom tool calls from
+            # whatever the model was thinking about).
+            if not recovered:
+                tp.feed(vtail)
             yield {"type": "token", "text": vtail}
         if recovered:
             yield {
@@ -254,11 +258,12 @@ async def run_turn(
 
         # Record the assistant turn. History stores only the visible answer
         # (no <think> blocks), so the model can't get confused re-reading
-        # its own reasoning on the next round.
-        assistant_message: dict = {"role": "assistant", "content": assistant_text}
-        if thinking_text:
-            assistant_message["thinking"] = thinking_text
-        conversation.append(assistant_message)
+        # its own reasoning on the next round. `thinking_text` was already
+        # streamed live to the client as `think` events; it is intentionally
+        # NOT persisted on the message — Ollama's chat API would drop the
+        # field on the next send anyway, and re-feeding a model its own
+        # prior reasoning drifts subsequent turns.
+        conversation.append({"role": "assistant", "content": assistant_text})
 
         if not tool_events:
             # Model has nothing more to do; flush any pending top-3 payload.

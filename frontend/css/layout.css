@@ -84,6 +84,9 @@ body.app { display: flex; flex-direction: column; height: 100vh; }
 .msg.tool      { align-self: flex-start; background: #f2ede0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
 .msg.think     { align-self: flex-start; background: #f7f4ec; font-style: italic; font-size: 12px; color: var(--muted); }
 .msg.warn      { align-self: stretch;    background: #fbeed6; border: 1px solid #d4b671; font-size: 12px; color: #6b4a10; }
+/* Placeholder assistant bubble when the model returned no visible content.
+   Needs to override .msg.assistant's color (specificity 0,0,2,0). */
+.msg.assistant.muted { color: var(--muted); font-style: italic; font-size: 13px; }
 
 .top3-card {
   align-self: flex-start;

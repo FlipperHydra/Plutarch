@@ -108,26 +108,34 @@ window.models_mod = (() => {
 
   // Streams the pull and resolves when Ollama reports the final "success"
   // status. Rejects if any event carries an error field.
-  function pullWithProgress(name) {
-    return new Promise((resolve, reject) => {
-      let done = false;
-      let handle = null;
-      const finish = (fn, arg) => { if (done) return; done = true; try { handle && handle.close(); } catch (_) {} fn(arg); };
-
-      api.pullModel(name, (ev) => {
-        if (ev.error) return finish(reject, new Error(ev.error));
-        // Progress: `status` is a human string, `total`/`completed` are bytes.
-        if (ev.total && ev.completed != null) {
-          const pct = Math.min(100, Math.floor((ev.completed / ev.total) * 100));
-          popupLabel().textContent =
-            `Pulling ${name}... ${ev.status || "downloading"} ${pct}%`;
-        } else if (ev.status) {
-          popupLabel().textContent = `Pulling ${name}... ${ev.status}`;
-          // Final Ollama event is `status: "success"`.
-          if (/^success$/i.test(ev.status)) return finish(resolve);
-        }
-      }).then((h) => { handle = h; }).catch(reject);
+  //
+  // Implementation note: api.sse now resolves only when the whole stream
+  // ends. So we await api.pullModel directly — no need to race a
+  // per-event resolve against the stream Promise. We remember the terminal
+  // event and surface any error after the stream completes.
+  async function pullWithProgress(name) {
+    let sawSuccess = false;
+    let streamError = null;
+    await api.pullModel(name, (ev) => {
+      if (ev.error) { streamError = new Error(ev.error); return; }
+      // Progress: `status` is a human string, `total`/`completed` are bytes.
+      if (ev.total && ev.completed != null) {
+        const pct = Math.min(100, Math.floor((ev.completed / ev.total) * 100));
+        popupLabel().textContent =
+          `Pulling ${name}... ${ev.status || "downloading"} ${pct}%`;
+      } else if (ev.status) {
+        popupLabel().textContent = `Pulling ${name}... ${ev.status}`;
+        // Final Ollama event is `status: "success"`.
+        if (/^success$/i.test(ev.status)) sawSuccess = true;
+      }
     });
+    if (streamError) throw streamError;
+    if (!sawSuccess) {
+      throw new Error(
+        "Pull stream ended without a success event. The download may have " +
+        "been interrupted; check `ollama list` and retry."
+      );
+    }
   }
 
   function showProgress(text) {
