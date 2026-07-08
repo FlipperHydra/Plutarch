@@ -9,12 +9,51 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import AsyncIterator, Optional
 
 import ollama
 
 
 log = logging.getLogger(__name__)
+
+
+def _extract_name(m) -> Optional[str]:
+    """Best-effort tag extraction from an ollama.list() record.
+
+    The ollama-python client's response schema has drifted across versions:
+      * newer builds expose ``.model`` on the Pydantic record,
+      * older builds exposed ``.name``,
+      * some proxies / mock servers return plain dicts.
+
+    We try each shape in turn so a schema change doesn't silently drop
+    every model (which manifests as "Ollama reports no models on disk"
+    in the UI even though ``ollama list`` shows them).
+    """
+    # Attribute-style access first (Pydantic model).
+    for attr in ("model", "name"):
+        v = getattr(m, attr, None)
+        if v:
+            return v
+    # Dict fallback.
+    if isinstance(m, dict):
+        for key in ("model", "name"):
+            v = m.get(key)
+            if v:
+                return v
+    return None
+
+
+def _extract_size(m) -> Optional[int]:
+    """Best-effort byte-size extraction, symmetric with _extract_name."""
+    v = getattr(m, "size", None)
+    if isinstance(v, int):
+        return v
+    if isinstance(m, dict):
+        v = m.get("size")
+        if isinstance(v, int):
+            return v
+    return None
 
 
 def normalize_model_name(name: str) -> str:
@@ -54,6 +93,15 @@ def normalize_model_name(name: str) -> str:
 
 class OllamaClient:
     def __init__(self) -> None:
+        # Resolve the effective host explicitly so we can surface it to
+        # the UI. The ollama client reads OLLAMA_HOST from env, defaulting
+        # to http://127.0.0.1:11434. When Plutarch runs in Docker on
+        # Linux this default points at the *container* loopback — not the
+        # host machine — which is a common source of "I pulled it but
+        # the app says no" reports.
+        self.ollama_host: str = (
+            os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+        )
         self._client = ollama.AsyncClient()
 
     # --- Discovery --------------------------------------------------------
@@ -77,37 +125,59 @@ class OllamaClient:
             resp = await self._client.list()
         except Exception as e:
             self.last_list_error = f"{type(e).__name__}: {e}"
-            log.warning("ollama.list() failed: %s", self.last_list_error)
+            log.warning(
+                "ollama.list() failed against host=%s: %s",
+                self.ollama_host, self.last_list_error,
+            )
             return []
         self.last_list_error = ""
+        raw = getattr(resp, "models", None) or []
+        log.debug(
+            "ollama.list() host=%s returned %d record(s)",
+            self.ollama_host, len(raw),
+        )
         names: list[str] = []
-        for m in getattr(resp, "models", None) or []:
-            name = getattr(m, "model", None)
-            if name is None and isinstance(m, dict):
-                name = m.get("model") or m.get("name")
-            if name:
-                names.append(normalize_model_name(name))
+        for m in raw:
+            name = _extract_name(m)
+            if not name:
+                # A record with neither .model nor .name is a schema mismatch
+                # — log it loudly so the next diagnostic pass sees which
+                # attributes the record actually has instead of silently
+                # returning [].
+                log.warning(
+                    "ollama.list() record has no model/name field; "
+                    "type=%s repr=%r", type(m).__name__, m,
+                )
+                continue
+            names.append(normalize_model_name(name))
+        if not names and raw:
+            log.warning(
+                "ollama.list() returned %d record(s) but none had a usable "
+                "name field; the client schema may have changed.", len(raw),
+            )
         return names
 
     async def local_sizes(self) -> dict[str, int]:
         """Best-effort disk size (bytes) per local model tag.
 
-        Keys are normalised, matching ``list_local()``.
+        Keys are normalised, matching ``list_local()``. Uses the same
+        defensive attribute extraction as ``list_local()`` so a schema
+        drift can't silently zero out size lookups.
         """
         out: dict[str, int] = {}
         try:
             resp = await self._client.list()
         except Exception as e:
             self.last_list_error = f"{type(e).__name__}: {e}"
-            log.warning("ollama.list() failed (sizes): %s", self.last_list_error)
+            log.warning(
+                "ollama.list() failed (sizes) against host=%s: %s",
+                self.ollama_host, self.last_list_error,
+            )
             return out
         for m in getattr(resp, "models", None) or []:
-            name = getattr(m, "model", None)
-            size = getattr(m, "size", None)
-            if isinstance(m, dict):
-                name = name or m.get("model") or m.get("name")
-                size = size or m.get("size")
-            if name and isinstance(size, int):
+            name = _extract_name(m)
+            size = _extract_size(m)
+            if name and size is not None:
                 out[normalize_model_name(name)] = size
         return out
 

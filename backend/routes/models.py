@@ -131,6 +131,11 @@ async def available():
         # Surface Ollama connectivity so the UI can distinguish
         # "no models pulled" from "can't reach the daemon".
         "list_error": ollama_client.last_list_error,
+        # Which daemon are we talking to? Included so a Docker/host
+        # mismatch ("I pulled on the host but the container asks the
+        # container's own loopback") is diagnosable from the UI without
+        # reading logs.
+        "ollama_host": ollama_client.ollama_host,
     }
 
 
@@ -155,6 +160,55 @@ async def detected():
     return {
         "models": models,
         "list_error": ollama_client.last_list_error,
+        "ollama_host": ollama_client.ollama_host,
+    }
+
+
+@router.get("/diagnostic")
+async def diagnostic():
+    """Return the raw ollama.list() payload the backend sees.
+
+    This is a debugging shortcut for the "terminal shows models but the
+    app says none" case: comparing this output against
+    ``curl http://127.0.0.1:11434/api/tags`` tells you unambiguously
+    whether Plutarch is querying a different daemon than your shell.
+
+    Fields:
+      * ``ollama_host``  — the URL the Ollama client was configured with.
+      * ``list_error``   — exception string if the call failed, else "".
+      * ``record_count`` — number of records returned by ollama.list().
+      * ``raw``          — each record dumped as-is (attributes + dict).
+                            Names and sizes are shown pre-normalization so
+                            the parser output can be reasoned about.
+    """
+    import ollama as _ollama_pkg
+    raw: list[dict] = []
+    error = ""
+    try:
+        resp = await ollama_client._client.list()
+        for m in getattr(resp, "models", None) or []:
+            entry = {
+                "type": type(m).__name__,
+                "attr_model": getattr(m, "model", None),
+                "attr_name": getattr(m, "name", None),
+                "attr_size": getattr(m, "size", None),
+            }
+            if hasattr(m, "model_dump"):
+                try:
+                    entry["dump"] = m.model_dump()
+                except Exception as e:
+                    entry["dump_error"] = f"{type(e).__name__}: {e}"
+            elif isinstance(m, dict):
+                entry["dump"] = m
+            raw.append(entry)
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+    return {
+        "ollama_host": ollama_client.ollama_host,
+        "ollama_client_version": getattr(_ollama_pkg, "__version__", "unknown"),
+        "list_error": error,
+        "record_count": len(raw),
+        "raw": raw,
     }
 
 
@@ -211,9 +265,13 @@ async def select(body: NameBody):
                 "requested_normalized": requested_norm,
                 "available": sorted(local_norm),
                 "list_error": ollama_client.last_list_error,
+                "ollama_host": ollama_client.ollama_host,
                 "hint": (
                     "Ollama did not report this model. Pull it via "
-                    "/models/pull, or check `ollama list` from a terminal."
+                    "/models/pull, or check `ollama list` from a terminal. "
+                    "If the terminal shows the model but this app does not, "
+                    "Plutarch may be pointed at a different Ollama daemon "
+                    "than your terminal — check the OLLAMA_HOST env var."
                 ),
             },
         )
