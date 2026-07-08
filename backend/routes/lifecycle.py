@@ -75,7 +75,11 @@ async def _finalize_wake() -> None:
             else:
                 try:
                     await ollama_client.load(default_model)
-                    app_state.loaded_model = default_model
+                    # Store normalized so the frontend picker (which now
+                    # emits normalized <option value> entries for system
+                    # rows) can match `data.loaded` against an option and
+                    # highlight it correctly.
+                    app_state.loaded_model = normalize_model_name(default_model)
                 except Exception as e:
                     app_state.last_error = f"default model load failed: {e}"
                     app_state.loaded_model = ""

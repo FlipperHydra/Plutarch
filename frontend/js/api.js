@@ -50,6 +50,7 @@ window.api = (() => {
     deleteNote: (id)       => req(`/notes/${id}`, { method: "DELETE" }),
 
     availableModels:  ()               => req("/models/available"),
+    detectedModels:   ()               => req("/models/detected"),
     selectModel:      (name)           => req("/models/select", { method: "POST", body: JSON.stringify({ name }) }),
     // Streams Ollama pull progress. onEvent receives { status, total, completed, ... } or { error }.
     pullModel:        (name, onEvent)  => obj.sse("/models/pull", { name }, onEvent),

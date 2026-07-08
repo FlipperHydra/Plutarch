@@ -40,20 +40,48 @@ window.models_mod = (() => {
     const s = sel();
     s.innerHTML = "";
     pulledMap.clear();
+
+    // Group entries by `source` so the picker cleanly separates "what
+    // Ollama sees on your system" from curated recommendations and your
+    // own manual adds. This mirrors the backend's enumeration order and
+    // uses native <optgroup> for accessibility (screen readers announce
+    // the group label; no extra ARIA needed).
+    const groups = {
+      system:      { label: "Detected on system (Ollama)", opts: [] },
+      recommended: { label: "Recommended (\u22644B, not pulled)", opts: [] },
+      custom:      { label: "Custom (manual add)", opts: [] },
+    };
     for (const m of data.models) {
       pulledMap.set(m.name, !!m.pulled);
       const opt = document.createElement("option");
       opt.value = m.name;
       const marks = [];
       if (!m.pulled)     marks.push("(not pulled)");
-      if (m.is_default)  marks.push("★ default");
-      // Prefix pulled models with a ✓ so users can see at a glance which are
-      // already on disk and ready to load without a download.
-      const prefix = m.pulled ? "✓ " : "";
+      if (m.is_default)  marks.push("\u2605 default");
+      // Prefix pulled models with a check so users can see at a glance
+      // which are already on disk and ready to load without a download.
+      const prefix = m.pulled ? "\u2713 " : "";
       opt.textContent = prefix + m.name + (marks.length ? "  " + marks.join(" ") : "");
       if (!m.pulled) opt.style.color = "#a89f92";
-      s.appendChild(opt);
+      const src = groups[m.source] ? m.source : "custom";
+      groups[src].opts.push(opt);
     }
+    for (const key of ["system", "recommended", "custom"]) {
+      const g = groups[key];
+      if (!g.opts.length) continue;
+      const og = document.createElement("optgroup");
+      og.label = g.label;
+      for (const opt of g.opts) og.appendChild(opt);
+      s.appendChild(og);
+    }
+
+    // Surface Ollama connectivity as a subtle tooltip on the picker so
+    // "no models" vs "daemon unreachable" is distinguishable without an
+    // extra UI element. Empty string clears any prior tooltip.
+    s.title = data.list_error
+      ? `Ollama list error: ${data.list_error}`
+      : "";
+
     if (data.loaded) {
       s.value = data.loaded;
       setPill("green", data.loaded);

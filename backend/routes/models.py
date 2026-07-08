@@ -32,35 +32,128 @@ class DefaultBody(BaseModel):
 
 @router.get("/available")
 async def available():
-    # ``list_local()`` returns normalized tags (e.g. ``gemma3:latest``). We
-    # normalise every comparison key so a recommended entry like
-    # ``gemma3:270m`` still matches its on-disk form, and a manually-added
-    # ``Gemma3`` still resolves to ``gemma3:latest``.
-    local_norm = set(await ollama_client.list_local())
+    """Enumerate models the app knows about, with Ollama as the enumeration
+    seed (not just the pulled-flag oracle).
+
+    Design shift (2026-07): previously the app enumerated from
+    ``RECOMMENDED_MODELS`` + ``custom_models`` and only stamped a
+    ``pulled`` flag from Ollama. That meant any tag pulled outside the app
+    (e.g. ``ollama pull mistral:7b`` from a terminal) was invisible to the
+    picker unless it happened to match a curated name.
+
+    Now the returned ``models`` list is the union of three sources:
+
+      * ``system``       — everything Ollama reports via ``list_local()``.
+                            These are always ``pulled: True`` by construction.
+      * ``recommended``  — curated ≤4B tags from ``RECOMMENDED_MODELS`` that
+                            aren't already covered by system entries. Shown
+                            even if not pulled, so users can pull them.
+      * ``custom``       — user-added tags from the ``custom_models`` table
+                            that aren't already covered.
+
+    The DB narrows to a preferences/history store; Ollama is the truth of
+    both existence *and* enumeration.
+
+    Each entry carries a ``source`` tag (``"system"``, ``"recommended"``,
+    ``"custom"``) plus the legacy flags for backward compatibility with the
+    frontend picker.
+    """
+    # System truth. Normalised names (e.g. ``gemma3:latest``).
+    local_norm_list = await ollama_client.list_local()
+    local_norm = set(local_norm_list)
+
     async with db.conn.execute("SELECT name FROM custom_models ORDER BY added_at") as cur:
         custom = [r["name"] for r in await cur.fetchall()]
 
     default = app_state.default_model
-    known = list(RECOMMENDED_MODELS)
-    for c in custom:
-        if c not in known:
-            known.append(c)
+    default_norm = normalize_model_name(default) if default else ""
 
-    entries = []
-    for name in known:
-        norm = normalize_model_name(name)
+    # Precompute normalized forms of recommended + custom so we can dedupe
+    # against Ollama-reported names without duplicate rows for e.g.
+    # ``gemma3`` (recommended) vs ``gemma3:latest`` (system-reported).
+    recommended_norm = {normalize_model_name(n): n for n in RECOMMENDED_MODELS}
+    custom_norm = {normalize_model_name(n): n for n in custom}
+
+    entries: list[dict] = []
+    seen_norm: set[str] = set()
+
+    # 1. System-reported models first. Display name = the exact tag Ollama
+    #    returned, so nothing is lossy or renamed. We also stamp whether it
+    #    happens to match a recommended / custom entry, so UI badges stay
+    #    accurate.
+    for name in local_norm_list:
+        if name in seen_norm:
+            continue
+        seen_norm.add(name)
         entries.append({
             "name": name,
-            "recommended": name in RECOMMENDED_MODELS,
-            "pulled": norm in local_norm,
-            "custom": name in custom,
-            "is_default": name == default,
+            "source": "system",
+            "recommended": name in recommended_norm,
+            "pulled": True,
+            "custom": name in custom_norm,
+            "is_default": name == default_norm,
         })
+
+    # 2. Recommended entries not already covered by a system row. These are
+    #    the curated ≤4B tags we want to offer for one-click pulling.
+    for name in RECOMMENDED_MODELS:
+        norm = normalize_model_name(name)
+        if norm in seen_norm:
+            continue
+        seen_norm.add(norm)
+        entries.append({
+            "name": name,
+            "source": "recommended",
+            "recommended": True,
+            "pulled": False,  # would have been in local_norm_list otherwise
+            "custom": name in custom,
+            "is_default": norm == default_norm,
+        })
+
+    # 3. Custom (user manual-add) entries not already covered.
+    for name in custom:
+        norm = normalize_model_name(name)
+        if norm in seen_norm:
+            continue
+        seen_norm.add(norm)
+        entries.append({
+            "name": name,
+            "source": "custom",
+            "recommended": False,
+            "pulled": norm in local_norm,
+            "custom": True,
+            "is_default": norm == default_norm,
+        })
+
     return {
         "models": entries,
         "loaded": app_state.loaded_model,
         # Surface Ollama connectivity so the UI can distinguish
         # "no models pulled" from "can't reach the daemon".
+        "list_error": ollama_client.last_list_error,
+    }
+
+
+@router.get("/detected")
+async def detected():
+    """Read-only passthrough of what Ollama reports on disk.
+
+    Distinct from ``/available`` (which unions system + recommended +
+    custom for the picker). This endpoint is a plain "what does the
+    daemon see?" diagnostic — useful for a dedicated "Detected on
+    system" section, for tooltips, and for troubleshooting when the
+    picker and reality seem to disagree.
+
+    Response shape:
+      * ``models``     — list of ``{name, size_bytes}`` for every tag
+                          Ollama reports. Names are normalised.
+      * ``list_error`` — non-empty if the daemon could not be reached.
+    """
+    names = await ollama_client.list_local()
+    sizes = await ollama_client.local_sizes()
+    models = [{"name": n, "size_bytes": sizes.get(n)} for n in names]
+    return {
+        "models": models,
         "list_error": ollama_client.last_list_error,
     }
 
@@ -132,7 +225,12 @@ async def select(body: NameBody):
     except Exception as e:
         app_state.last_error = f"load failed: {e}"
         raise HTTPException(500, str(e))
-    app_state.loaded_model = body.name
+    # Store the normalized form so the pill, picker (which now emits
+    # normalized names in <option value>), and any subsequent comparison
+    # all agree. Without this, a legacy default like ``gemma3`` set
+    # before the Ollama-first enumeration shift would fail to select
+    # itself in the picker on refresh.
+    app_state.loaded_model = requested_norm
     return app_state.snapshot()
 
 
