@@ -40,13 +40,37 @@ window.api = (() => {
 
     chatHistory:      ()               => req("/chat/history"),
 
-    // Server-sent-events helper — pass an onEvent(event) callback.
-    // Returns { close() } to abort mid-stream.
-    async sse(path, body, onEvent) {
+    // Server-sent-events helper.
+    //
+    // Behaviour contract:
+    //   * Returns a Promise that resolves only when the stream ends cleanly.
+    //     (Previously this returned early with a background reader — that
+    //     let callers proceed while events were still arriving and made
+    //     reader-loop errors invisible, which manifested as empty chat bubbles.)
+    //   * Rejects if the initial response is non-2xx, the response has no
+    //     body, or the reader throws mid-stream.
+    //   * `onEvent(parsedJson)` is called for every complete `data:` frame.
+    //     Handles both `\n\n` (LF) and `\r\n\r\n` (CRLF) frame boundaries so
+    //     Windows/proxy line endings don't break parsing.
+    //   * Frames that aren't valid JSON are logged and skipped rather than
+    //     silently dropped.
+    //   * Callers that need mid-stream cancellation can pass an AbortSignal
+    //     via `opts.signal`.
+    async sse(path, body, onEvent, opts = {}) {
       const controller = new AbortController();
+      // Chain any externally-supplied signal so callers can abort us.
+      if (opts.signal) {
+        if (opts.signal.aborted) controller.abort();
+        else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
+      }
       const r = await fetch(BASE + path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          // Ask any intermediate proxy not to buffer. Not honoured by every
+          // proxy but harmless when it isn't.
+          "Accept": "text/event-stream",
+        },
         body: JSON.stringify(body || {}),
         signal: controller.signal,
       });
@@ -56,23 +80,52 @@ window.api = (() => {
         throw new Error(msg);
       }
       const reader = r.body.getReader();
-      const dec = new TextDecoder();
+      const dec = new TextDecoder("utf-8");
       let buf = "";
-      (async () => {
+
+      function drain() {
+        // Match either LF-LF or CRLF-CRLF as a frame separator. We walk the
+        // buffer looking for the earliest occurrence of either.
+        while (true) {
+          const iLF   = buf.indexOf("\n\n");
+          const iCRLF = buf.indexOf("\r\n\r\n");
+          let idx, sep;
+          if (iLF === -1 && iCRLF === -1) return;
+          if (iCRLF !== -1 && (iLF === -1 || iCRLF < iLF)) { idx = iCRLF; sep = 4; }
+          else                                             { idx = iLF;   sep = 2; }
+          const raw = buf.slice(0, idx);
+          buf = buf.slice(idx + sep);
+          // An SSE frame can have multiple lines; we care about `data:` lines.
+          // Join multi-line `data:` payloads with "\n" per the SSE spec.
+          const lines = raw.split(/\r?\n/);
+          const dataLines = [];
+          for (const line of lines) {
+            if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+          }
+          if (!dataLines.length) continue;
+          const payload = dataLines.join("\n");
+          try { onEvent(JSON.parse(payload)); }
+          catch (e) { console.warn("[sse] non-JSON frame skipped:", payload, e); }
+        }
+      }
+
+      try {
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
           buf += dec.decode(value, { stream: true });
-          let idx;
-          while ((idx = buf.indexOf("\n\n")) >= 0) {
-            const raw = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 2);
-            if (raw.startsWith("data:")) {
-              try { onEvent(JSON.parse(raw.slice(5).trim())); } catch (_) {}
-            }
-          }
+          drain();
         }
-      })();
+        // Flush any decoder tail + any final frame that didn't get a
+        // trailing blank line (permissive parse).
+        buf += dec.decode();
+        if (buf.trim()) drain();
+      } finally {
+        try { reader.releaseLock(); } catch (_) {}
+      }
+
+      // Return an object with close() so existing callers that stored the
+      // handle (models.js pullWithProgress) keep working.
       return { close: () => controller.abort() };
     },
   };

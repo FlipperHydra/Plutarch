@@ -63,12 +63,24 @@ window.chat_mod = (() => {
     sendBtn().disabled = true;
 
     const userMsg = makeMsg("user"); userMsg.textContent = text;
-    const asstMsg = makeMsg("assistant"); asstMsg.textContent = "";
+    // The assistant may produce text over multiple tool-agent rounds. We
+    // keep one "current" assistant bubble that grows as `token` events
+    // stream in, and open a fresh bubble whenever a tool call interrupts
+    // so the pre- and post-tool text render as distinct messages instead
+    // of concatenating in one confusing bubble.
+    let asstMsg = makeMsg("assistant"); asstMsg.textContent = "";
+    let sawTokenInBubble = false;
     const topCards = [];
+    const t0 = performance.now();
+    let frameCount = 0;
 
     try {
       await api.sse("/chat/stream", { message: text }, ev => {
-        if (ev.type === "token")     asstMsg.textContent += ev.text;
+        frameCount++;
+        if (ev.type === "token") {
+          asstMsg.textContent += ev.text;
+          sawTokenInBubble = true;
+        }
         else if (ev.type === "think") {
           if (stepsVisible()) {
             const t = makeMsg("think");
@@ -82,6 +94,12 @@ window.chat_mod = (() => {
               `▶ ${ev.name}(${JSON.stringify(ev.args)})\n` +
               `↳ ${typeof ev.result === "string" ? ev.result : JSON.stringify(ev.result)}`;
           }
+          // Start a fresh assistant bubble for whatever the model says
+          // AFTER consuming this tool result.
+          if (sawTokenInBubble) {
+            asstMsg = makeMsg("assistant"); asstMsg.textContent = "";
+            sawTokenInBubble = false;
+          }
         }
         else if (ev.type === "top3")  topCards.push(ev.card);
         else if (ev.type === "warning") {
@@ -92,8 +110,20 @@ window.chat_mod = (() => {
         else if (ev.type === "done")  { renderTop3(topCards); }
         log().scrollTop = log().scrollHeight;
       });
+      // Diagnostic breadcrumb — helps confirm the stream actually delivered
+      // events end-to-end. Empty bubbles + zero frames = SSE never arrived;
+      // empty bubble + frames > 0 = model produced no visible content.
+      const dtMs = Math.round(performance.now() - t0);
+      console.info(`[chat] stream done: ${frameCount} frames in ${dtMs}ms`);
+      if (!sawTokenInBubble && !asstMsg.textContent) {
+        asstMsg.textContent =
+          "(no visible output — the model may have replied with only a tool call " +
+          "or hidden reasoning. Try turning on Show steps.)";
+        asstMsg.classList.add("muted");
+      }
     } catch (e) {
       asstMsg.textContent += `\n[error] ${e.message}`;
+      console.error("[chat] stream failed:", e);
     } finally {
       sendBtn().disabled = false;
     }
