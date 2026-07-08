@@ -46,13 +46,19 @@ SMALL_NOTE_TOKEN_LIMIT: int = int(
 )
 
 # --- Recommended models (all <= 4B for the standard install) --------------
+# Deliberately excluded: gemma3:270m and qwen2.5:0.5b. Sub-1B models
+# cannot reliably follow the Plutarch system prompt (identity as
+# "Plutarch", XML tool-call syntax, ranking pipeline) and produce
+# confused replies like "I am a Google AI model" instead of using the
+# tools. 1B is the practical floor; 3–4B is the sweet spot for tool
+# following. Ordered smallest → largest so the picker default lands on
+# the smallest capable option.
 RECOMMENDED_MODELS: list[str] = [
-    "gemma3:270m",
     "gemma3:1b",
-    "gemma3:4b",
-    "qwen2.5:0.5b",
     "llama3.2:1b",
     "phi3:mini",
+    "qwen2.5:3b",
+    "gemma3:4b",
 ]
 
 

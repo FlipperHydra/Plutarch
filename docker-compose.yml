@@ -18,19 +18,25 @@ services:
     networks:
       - plutarch_net
     restart: unless-stopped
-    # GPU acceleration: Ollama auto-detects NVIDIA / AMD when the
-    # container runtime exposes it. Docker Desktop on Windows with the
-    # WSL2 backend + NVIDIA Container Toolkit will honour this block; if
-    # your setup doesn't support it, Docker will refuse to start the
-    # service with a clear error — in that case, comment the whole
-    # `deploy:` block out and Ollama will fall back to CPU.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # GPU acceleration is intentionally DISABLED by default. Requesting
+    # an NVIDIA device the runtime can't actually deliver (e.g. Docker
+    # Desktop on Windows without a working WSL2 CUDA passthrough) causes
+    # Ollama to fall into a hybrid "GPU-shaped buffers in system RAM"
+    # code path where a small 270M model at ctx=16384 balloons to ~7 GB
+    # RSS. Confirmed on this project by comparing `ollama ps` (which
+    # reports 100% GPU) against `nvidia-smi` (no gpu) — Ollama labels
+    # the runner GPU even when the buffers landed on host RAM.
+    #
+    # If you have a working NVIDIA setup with the Container Toolkit,
+    # uncomment the block below and verify with `docker compose exec
+    # ollama nvidia-smi` before trusting the label.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     healthcheck:
       # Use `ollama list` as the readiness probe. The upstream
       # ollama/ollama image is Ubuntu-based but ships without curl or
@@ -59,8 +65,14 @@ services:
       # the Compose service name and resolves via Docker's built-in DNS.
       # No host binding required, no port exposed to the LAN.
       OLLAMA_HOST: http://ollama:11434
-      PLUTARCH_NUM_CTX: "16384"
-      PLUTARCH_COMPACT_THRESHOLD: "2000"
+      # Right-sized for a local notes assistant on small models. The KV
+      # cache scales linearly with num_ctx, so dropping from 16384 to
+      # 2048 cuts Ollama's resident memory roughly 8x. System prompt +
+      # tool prompt run ~600 tokens; compaction fires at 1200 to leave
+      # ~800 tokens of headroom for the incoming user message plus a
+      # tool round-trip before we bump the window.
+      PLUTARCH_NUM_CTX: "2048"
+      PLUTARCH_COMPACT_THRESHOLD: "1200"
     volumes:
       - plutarch_data:/app/data
     networks:
