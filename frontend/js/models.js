@@ -142,29 +142,40 @@ window.models_mod = (() => {
       // actually reports so the user can tell whether it's a tag mismatch,
       // a daemon-unreachable, or a genuinely-missing model.
       let extra = "";
-      if (e && e.status === 409 && e.detail && typeof e.detail === "object") {
-        const avail = Array.isArray(e.detail.available) ? e.detail.available : [];
-        const listErr = e.detail.list_error || "";
-        const host = e.detail.ollama_host || "(unknown)";
+      if (e && e.detail && typeof e.detail === "object") {
+        const d = e.detail;
+        const host = d.ollama_host || "(unknown)";
         const hostLine = `\n\nPlutarch is querying Ollama at: ${host}`;
-        if (listErr) {
-          extra = `\n\nOllama returned an error while listing models: ${listErr}` +
-                  `\nIs the daemon running? Try \`ollama list\` in a terminal.` +
-                  hostLine;
-        } else if (avail.length === 0) {
-          // The daemon replied but reported zero models. If `ollama list`
-          // in your terminal shows models, Plutarch is almost certainly
-          // pointed at a different daemon (common on Docker installs).
-          extra = "\n\nOllama reports no models on disk. Try `ollama list`." +
+        if (e.status === 409) {
+          const avail = Array.isArray(d.available) ? d.available : [];
+          const listErr = d.list_error || "";
+          if (listErr) {
+            extra = `\n\nOllama returned an error while listing models: ${listErr}` +
+                    `\nIs the daemon running? Try \`ollama list\` in a terminal.` +
+                    hostLine;
+          } else if (avail.length === 0) {
+            extra = "\n\nOllama reports no models on disk. Try `ollama list`." +
+                    hostLine +
+                    "\nIf your terminal `ollama list` shows models but this " +
+                    "alert does not, set the OLLAMA_HOST env var to the " +
+                    "daemon your terminal uses (e.g. " +
+                    "http://host.docker.internal:11434 on Docker Desktop).";
+          } else {
+            extra = `\n\nOllama reports these on disk:\n  \u2022 ` + avail.join("\n  \u2022 ") +
+                    `\n\nRequested (normalized): ${d.requested_normalized || ""}` +
+                    hostLine;
+          }
+        } else if (e.status === 500) {
+          // /models/select 500 now returns a structured detail with
+          // exception_type + exception_message + hint. Render it so the
+          // user sees the real Ollama error (OOM, corrupt GGUF, etc.)
+          // instead of a bare httpx traceback.
+          const et = d.exception_type || "";
+          const em = d.exception_message || "";
+          const hint = d.hint || "";
+          extra = `\n\nOllama load error (${et}): ${em}` +
                   hostLine +
-                  "\nIf your terminal `ollama list` shows models but this " +
-                  "alert does not, set the OLLAMA_HOST env var to the " +
-                  "daemon your terminal uses (e.g. " +
-                  "http://host.docker.internal:11434 on Docker Desktop).";
-        } else {
-          extra = `\n\nOllama reports these on disk:\n  \u2022 ` + avail.join("\n  \u2022 ") +
-                  `\n\nRequested (normalized): ${e.detail.requested_normalized || ""}` +
-                  hostLine;
+                  (hint ? `\n\n${hint}` : "");
         }
       }
       alert("Model setup failed: " + e.message + extra +

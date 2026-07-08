@@ -197,18 +197,65 @@ class OllamaClient:
 
     # --- Load / unload ----------------------------------------------------
     async def load(self, name: str) -> None:
-        """Prime the model into VRAM by issuing an empty generate call."""
-        await self._client.generate(model=name, prompt="", keep_alive="30m")
+        """Prime the model into VRAM without running inference.
+
+        Ollama documents two ways to warm a model without generating any
+        tokens (https://github.com/ollama/ollama/blob/main/docs/api.md
+        — "Load a model" section):
+
+            POST /api/generate  { model, keep_alive }        # no prompt
+            POST /api/chat      { model, messages: [], keep_alive }
+
+        The ollama-python client's ``generate()`` builds its JSON body
+        with ``exclude_none=True``, so passing ``prompt=None`` (the
+        default) makes the field disappear from the wire payload —
+        which is exactly the load-only shape.
+
+        Previously this method passed ``prompt=""``, which the client
+        serialises to ``{"prompt": ""}`` (empty string is not None).
+        Some Ollama server builds accept that as a warm; others reject
+        it with a 400 / runner error. The ``prompt=None`` form is the
+        documented, version-independent way.
+
+        We wrap in a try/except and re-raise with a clearer prefix so
+        the /models/select 500 response tells the user which step
+        failed (previously the exception string leaked raw httpx
+        internals with no context).
+        """
+        try:
+            await self._client.generate(
+                model=name, prompt=None, keep_alive="30m"
+            )
+        except Exception as e:
+            log.warning(
+                "ollama.generate(load) failed for model=%r host=%s: %s: %s",
+                name, self.ollama_host, type(e).__name__, e,
+            )
+            raise RuntimeError(
+                f"Ollama refused to load model {name!r}: "
+                f"{type(e).__name__}: {e}"
+            ) from e
 
     async def unload(self, name: str) -> None:
-        """Force eviction by sending keep_alive=0 to the model."""
+        """Force eviction by sending keep_alive=0 to the model.
+
+        Same rationale as ``load()`` — pass ``prompt=None`` so the
+        client omits the field entirely rather than sending an empty
+        string. Unload errors are still swallowed because "model wasn't
+        loaded" is a valid pre-state we don't want to fail on.
+        """
         if not name:
             return
         try:
-            await self._client.generate(model=name, prompt="", keep_alive=0)
-        except Exception:
-            # If Ollama complains, the model was likely already evicted.
-            pass
+            await self._client.generate(
+                model=name, prompt=None, keep_alive=0
+            )
+        except Exception as e:
+            # Log at debug — an already-evicted model is not an error.
+            log.debug(
+                "ollama.generate(unload) for model=%r ignored: %s: %s",
+                name, type(e).__name__, e,
+            )
 
     # --- Chat streaming ---------------------------------------------------
     async def chat_stream(

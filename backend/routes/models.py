@@ -281,8 +281,32 @@ async def select(body: NameBody):
     try:
         await ollama_client.load(body.name)
     except Exception as e:
+        # Load failures happen for real reasons: OOM, corrupted GGUF,
+        # incompatible quantization, daemon runner crash. We surface a
+        # structured detail so the frontend can render actionable text
+        # instead of a bare httpx traceback string.
         app_state.last_error = f"load failed: {e}"
-        raise HTTPException(500, str(e))
+        raise HTTPException(
+            500,
+            {
+                "error": f"load failed for model {body.name!r}",
+                "requested": body.name,
+                "requested_normalized": requested_norm,
+                "exception_type": type(e).__name__,
+                "exception_message": str(e),
+                "ollama_host": ollama_client.ollama_host,
+                "hint": (
+                    "Ollama accepted the model as present but rejected the "
+                    "load call. Common causes: (1) not enough VRAM/RAM for "
+                    "the model at the requested context size; (2) an "
+                    "incompatible or corrupt GGUF file — try "
+                    "`docker compose exec ollama ollama rm <model>` then "
+                    "re-pull; (3) an Ollama server bug on that specific "
+                    "tag — try a different quantization (e.g. Q4_K_M "
+                    "instead of Q8_0)."
+                ),
+            },
+        )
     # Store the normalized form so the pill, picker (which now emits
     # normalized names in <option value>), and any subsequent comparison
     # all agree. Without this, a legacy default like ``gemma3`` set
